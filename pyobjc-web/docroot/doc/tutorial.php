@@ -41,7 +41,7 @@ just after the section &quot;<em>Creating the Currency Converter Interface</em>&
 Work through &quot;Defining the Classes of Currency Converter&quot;, &quot;Connecting
 ConverterController to the Interface&quot;, and stop at &quot;<em>Implementing the Classes
 of Currency Converter</em>&quot;, as we are going to do this in Python, not Objective-C.
-Your nib file should now be the same as <a class="reference" href="step3-MainMenu.nib.zip">step3-MainMenu.nib</a>.</li>
+Your nib file should now be the same as <a class="reference" href="step3-MainMenu.nib">step3-MainMenu.nib.zip</a>.</li>
 </ol>
 <ol class="arabic" start="4">
 <li><p class="first">Create the skeleton Python script by running the <tt class="literal"><span class="pre">nibclassbuilder</span></tt> script.
