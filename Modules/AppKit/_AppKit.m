@@ -1,28 +1,36 @@
 /*
- * Mapping of static items in the AppKit kit:
- * 
- * - constants  (mostly done)
- * - data types (TODO)
- * - enumerations
- * - exceptions 
- * - global functions (TODO)
+ * Mapping of static items in the AppKit kit and helper functions for mapping
+ * "difficult" methods.
  */
 #include <Python.h>
+#include "pyobjc-api.h"
+#include "wrapper-const-table.h"
 
 #import <AppKit/AppKit.h>
 #import <AppKit/NSGraphics.h>
-#ifndef GNUSTEP
-#import <AppKit/NSAccessibility.h>
-#import <AppKit/NSTypesetter.h>
+
+
+#ifdef MACOSX
+#import <CoreFoundation/CoreFoundation.h>
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED > MAC_OS_X_VERSION_10_2
+#import <AppKit/NSNib.h>
 #endif
 
-#include "pyobjc-api.h"
-#include "objc_support.h"
-#include "OC_PythonObject.h"
-#include "wrapper-const-table.h"
-#ifndef GNU_RUNTIME
-#include <objc/objc-runtime.h>
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_2
+#import <AppKit/NSAccessibility.h>
 #endif
+
+#import <AppKit/NSTypesetter.h>
+
+#else /* GNUSTEP  */
+
+#import <AppKit/NSOpenGL.h>
+#import <AppKit/AppKitExceptions.h>
+#import <AppKit/NSHelpManager.h>
+
+#endif
+
 
 /** Functions */
 
@@ -31,7 +39,10 @@
 /* 'Applications' */
 
 static PyObject* 
-objc_NSApplicationMain(PyObject* self, PyObject* args, PyObject* kwds)
+objc_NSApplicationMain(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
 {
 static	char* keywords[] = { "argv", NULL };
 	char** argv = NULL;
@@ -82,28 +93,44 @@ static	char* keywords[] = { "argv", NULL };
 
 	argv[argc] = NULL;
 
+#ifdef MACOSX
+	/*
+	 * NSApplicationMain on MacOS X completely ignores its arguments and 
+	 * reads the argv from the shared NSProcessInfo. We *HACK* around this 
+	 * by setting a (private) instance variable of the object.
+	 *
+	 * This code is evil. Look away if you're easily scared.
+	 */
 	{
-	  typedef struct {
-	    @defs(NSProcessInfo)
-	  } NSProcessInfoStruct;
+		typedef struct {
+			@defs(NSProcessInfo)
+		} NSProcessInfoStruct;
 	  
-	  // everything in this scope is evil and wrong.  It leaks, too.
-	  NSMutableArray *args = [[NSMutableArray alloc] init];
-	  NSProcessInfo *processInfo = [NSProcessInfo processInfo];
-	  char **anArg = argv;
-	  while(*anArg) {
-	    [args addObject: [NSString stringWithUTF8String: *anArg]];
-	    anArg++;
-	  }
-	  ((NSProcessInfoStruct *)processInfo)->arguments = args;
-	}
+		NSMutableArray *newarglist = [[NSMutableArray alloc] init];
+		NSProcessInfo *processInfo = [NSProcessInfo processInfo];
+		char **anArg = argv;
 
-	NS_DURING
+		while(*anArg) {
+			[newarglist addObject: 
+				[NSString stringWithUTF8String: *anArg]];
+			anArg++;
+		}
+
+		/* Don't release the orignal arguments, because we don't know
+		 * if the list is owned by the processInfo object.
+		 *
+		 *[((NSProcessInfoStruct *)processInfo)->arguments release]; 
+		 */
+		((NSProcessInfoStruct *)processInfo)->arguments = newarglist;
+	}
+#endif /* MACOSX */
+
+	PyObjC_DURING
 		res = NSApplicationMain(argc, (const char**)argv);
-	NS_HANDLER
-		ObjCErr_FromObjC(localException);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
 		res = -1;
-	NS_ENDHANDLER
+	PyObjC_ENDHANDLER
 
 	for (i = 0; i < argc; i++) {
 		free(argv[i]);
@@ -116,7 +143,7 @@ static	char* keywords[] = { "argv", NULL };
 
 error_cleanup:
 	if (argv != NULL) {
-		for (i = 0; i < argc; i++) {\
+		for (i = 0; i < argc; i++) {
 			if (argv[i] != NULL) {
 				free(argv[i]);
 				argv[i] = NULL;
@@ -131,7 +158,10 @@ error_cleanup:
 
 
 static PyObject*
-objc_NSApp(PyObject* self, PyObject* args, PyObject* kwds)
+objc_NSApp(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
 {
 static  char* keywords[] = { NULL };
         PyObject* result;
@@ -140,13 +170,16 @@ static  char* keywords[] = { NULL };
 		return NULL;
 	}
 
-	result = ObjC_IdToPython(NSApp);
+	result = PyObjC_IdToPython(NSApp);
 
 	return result;                               
 }
 
 static PyObject*
-objc_NSCountWindows(PyObject* self, PyObject* args, PyObject* kwds)
+objc_NSCountWindows(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
 {
 static  char* keywords[] = { NULL };
 	int       count;
@@ -155,18 +188,21 @@ static  char* keywords[] = { NULL };
 		return NULL;
 	}
 
-	NS_DURING
+	PyObjC_DURING
 		NSCountWindows(&count);
-	NS_HANDLER
-		ObjCErr_FromObjC(localException);
-	NS_ENDHANDLER
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
 	if (PyErr_Occurred()) return NULL;
 
 	return PyInt_FromLong(count);
 }
 
 static PyObject*
-objc_NSCountWindowsForContext(PyObject* self, PyObject* args, PyObject* kwds)
+objc_NSCountWindowsForContext(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
 {
 static  char* keywords[] = { "context", NULL };
 	int       count;
@@ -176,100 +212,642 @@ static  char* keywords[] = { "context", NULL };
 		return NULL;
 	}
 
-	NS_DURING
+	PyObjC_DURING
 		NSCountWindowsForContext(context, &count);
-	NS_HANDLER
-		ObjCErr_FromObjC(localException);
-	NS_ENDHANDLER
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
 	if (PyErr_Occurred()) return NULL;
 
 	return PyInt_FromLong(count);
 }
 
 static PyObject*
-objc_NSAvailableWindowDepths(PyObject* self, PyObject* args, PyObject* kwds)
+objc_NSRectFillList(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
 {
-static  char* keywords[] = { NULL };
-	const NSWindowDepth*	  depths;
-	PyObject *result, *tmp;
+static char* keywords[] = { "rects", "count", 0 };
+	PyObject* pyList;
+	PyObject* pyCount = NULL;
+	NSRect* rects;
+	int rectCount;
+	int arrayToken;
 
-	if (!PyArg_ParseTupleAndKeywords(args, kwds, ":NSAvailableWindowDepts", keywords)) {
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|O", keywords, &pyList, &pyCount)) {
 		return NULL;
 	}
 
-	NS_DURING
-		depths = NSAvailableWindowDepths();
-	NS_HANDLER
-		depths = NULL;
-		ObjCErr_FromObjC(localException);
-	NS_ENDHANDLER
-	if (PyErr_Occurred()) return NULL;
+	arrayToken = PyObjC_PythonToCArray(
+		@encode(NSRect), pyList, pyCount, (void**)&rects, &rectCount);
 
-	result = PyList_New(0);
-	if (result == NULL) return NULL;
+	if (arrayToken == -1) return NULL;
 
-	while (*depths != 0) {
-		PyObject* v = PyInt_FromLong(*depths);
-		if (v == NULL) {
-			Py_DECREF(result);
-			return NULL;
-		}
+	PyObjC_DURING
+		NSRectFillList(rects, rectCount);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
 
-		if (PyList_Append(result, v) == -1) {
-			Py_DECREF(result);
-			return NULL;
-		}
+	PyObjC_FreeCArray(arrayToken, rects);
 
-		depths++;
+	if (PyErr_Occurred()) {
+		return NULL;
 	}
 
-	tmp = PyList_AsTuple(result);
-	Py_XDECREF(result);
-	return tmp;
+	Py_INCREF(Py_None);
+	return Py_None; 
 }
 
-
-static PyObject*
-objc_NSRectFillList(PyObject* self, PyObject* args, PyObject* kwds)
+static int
+Convert_NSCompositingOperation(PyObject* arg, void* out)
 {
-  unsigned char *rectBytes;
-  int rectByteLength;
-  int rectCount = -1;
-  if  (PyArg_ParseTuple(args, "s#|i", &rectBytes, &rectByteLength, &rectCount) < 0) {
-    return NULL;
-  }
+	int r;
 
-  if ( (rectByteLength == 0) || (rectCount == 0) ) {
-    Py_INCREF(Py_None);
-    return Py_None; 
-  }
-
-  if ( rectByteLength % sizeof(NSRect) ) {
-    PyErr_SetString(PyExc_ValueError, "length of array of packed floats is not a multiple of a length of array of NSRect (float * 4).");
-    return NULL;
-  }
-
-  if (rectCount < -1 ) {
-    PyErr_SetString(PyExc_ValueError, "RectCount was less than zero.");
-    return NULL;
-  }
-
-  if (rectCount >= 0 ) {
-    if (rectCount > (rectByteLength / sizeof(NSRect))) {
-      PyErr_SetString(PyExc_ValueError, "Rect count specified, but was longer than supplied array of rectangles.");
-      return NULL;
-    }
-  } else
-    rectCount = rectByteLength / sizeof(NSRect);
-
-  NSRectFillList((NSRect *) rectBytes, rectCount);
-
-  Py_INCREF(Py_None);
-  return Py_None; 
+	r = PyObjC_PythonToObjC(@encode(NSCompositingOperation), arg, out);
+	if (r == -1) {
+		return 0;
+	}
+	return 1;
 }
 
 static PyObject*
-objc_NSGetWindowServerMemory(PyObject* self, PyObject* args, PyObject* kwds)
+objc_NSRectFillListUsingOperation(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
+{
+static char* keywords[] = { "rects", "count", "operation", 0 };
+	PyObject* pyList;
+	PyObject* pyCount = NULL;
+	NSRect* rects;
+	int rectCount;
+	int arrayToken;
+	NSCompositingOperation operation;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOO&", keywords, &pyList, &pyCount, Convert_NSCompositingOperation, &operation)) {
+		return NULL;
+	}
+
+	arrayToken = PyObjC_PythonToCArray(
+		@encode(NSRect), pyList, pyCount, (void**)&rects, &rectCount);
+
+	if (arrayToken == -1) return NULL;
+
+	PyObjC_DURING
+		NSRectFillListUsingOperation(rects, rectCount, operation);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	PyObjC_FreeCArray(arrayToken, rects);
+
+	if (PyErr_Occurred()) {
+		return NULL;
+	}
+
+	Py_INCREF(Py_None);
+	return Py_None; 
+}
+
+static PyObject*
+objc_NSRectFillListWithColors(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
+{
+static char* keywords[] = { "rects", "colors", "count", 0 };
+	PyObject* pyList;
+	PyObject* pyColors;
+	PyObject* pyCount = NULL;
+	NSRect* rects;
+	id* colors;
+	int rectCount;
+	int colorCount;
+	int rectToken;
+	int colorToken;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO|O", keywords, &pyList, &pyColors, &pyCount)) {
+		return NULL;
+	}
+
+	rectToken = PyObjC_PythonToCArray(
+		@encode(NSRect), pyList, pyCount, (void**)&rects, &rectCount);
+
+	if (rectToken == -1) return NULL;
+
+	colorToken = PyObjC_PythonToCArray(
+		@encode(id), pyColors, pyCount, (void**)&colors, &colorCount);
+
+	if (colorToken == -1)  {
+		PyObjC_FreeCArray(rectToken, rects);
+		return NULL;
+	}
+
+	if (colorCount != rectCount) {
+		PyErr_Format(PyExc_ValueError,
+				"Passing %d rects and %d colors",
+				rectCount, colorCount);
+		PyObjC_FreeCArray(rectToken, rects);
+		PyObjC_FreeCArray(colorToken, colors);
+		return NULL;
+	}
+		
+
+	PyObjC_DURING
+		NSRectFillListWithColors(rects, colors, rectCount);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	PyObjC_FreeCArray(rectToken, rects);
+	PyObjC_FreeCArray(colorToken, colors);
+
+	if (PyErr_Occurred()) {
+		return NULL;
+	}
+
+	Py_INCREF(Py_None);
+	return Py_None; 
+}
+
+static PyObject*
+objc_NSRectFillListWithColorsUsingOperation(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
+{
+static char* keywords[] = { "rects", "colors", "count", "operation", 0 };
+	PyObject* pyList;
+	PyObject* pyColors;
+	PyObject* pyCount = NULL;
+	NSRect* rects;
+	id* colors;
+	int rectCount;
+	int colorCount;
+	int rectToken;
+	int colorToken;
+	NSCompositingOperation operation;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOO&", keywords, &pyList, &pyColors, &pyCount, Convert_NSCompositingOperation, &operation)) {
+		return NULL;
+	}
+
+	rectToken = PyObjC_PythonToCArray(
+		@encode(NSRect), pyList, pyCount, (void**)&rects, &rectCount);
+
+	if (rectToken == -1) return NULL;
+
+	colorToken = PyObjC_PythonToCArray(
+		@encode(id), pyColors, pyCount, (void**)&colors, &colorCount);
+
+	if (colorToken == -1)  {
+		PyObjC_FreeCArray(rectToken, rects);
+		return NULL;
+	}
+
+	if (colorCount != rectCount) {
+		PyErr_Format(PyExc_ValueError,
+				"Passing %d rects and %d colors",
+				rectCount, colorCount);
+		PyObjC_FreeCArray(rectToken, rects);
+		PyObjC_FreeCArray(colorToken, colors);
+		return NULL;
+	}
+		
+
+	PyObjC_DURING
+		NSRectFillListWithColorsUsingOperation(rects, colors, rectCount, operation);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	PyObjC_FreeCArray(rectToken, rects);
+	PyObjC_FreeCArray(colorToken, colors);
+
+	if (PyErr_Occurred()) {
+		return NULL;
+	}
+
+	Py_INCREF(Py_None);
+	return Py_None; 
+}
+
+static PyObject*
+objc_NSRectFillListWithGrays(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
+{
+static char* keywords[] = { "rects", "grays", "count", 0 };
+	PyObject* pyList;
+	PyObject* pyGrays;
+	PyObject* pyCount = NULL;
+	NSRect* rects;
+	float* grays;
+	int rectCount;
+	int grayCount;
+	int rectToken;
+	int grayToken;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "OO|O", keywords, &pyList, &pyGrays, &pyCount)) {
+		return NULL;
+	}
+
+	rectToken = PyObjC_PythonToCArray(
+		@encode(NSRect), pyList, pyCount, (void**)&rects, &rectCount);
+
+	if (rectToken == -1) return NULL;
+
+	grayToken = PyObjC_PythonToCArray(
+		@encode(float), pyGrays, pyCount, (void**)&grays, &grayCount);
+
+	if (grayToken == -1)  {
+		PyObjC_FreeCArray(rectToken, rects);
+		return NULL;
+	}
+
+	if (grayCount != rectCount) {
+		PyErr_Format(PyExc_ValueError,
+				"Passing %d rects and %d colors",
+				rectCount, grayCount);
+		PyObjC_FreeCArray(rectToken, rects);
+		PyObjC_FreeCArray(grayToken, grays);
+		return NULL;
+	}
+		
+
+	PyObjC_DURING
+		NSRectFillListWithGrays(rects, grays, rectCount);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	PyObjC_FreeCArray(rectToken, rects);
+	PyObjC_FreeCArray(grayToken, grays);
+
+	if (PyErr_Occurred()) {
+		return NULL;
+	}
+
+	Py_INCREF(Py_None);
+	return Py_None; 
+}
+
+static PyObject*
+objc_NSDrawTiledRects(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
+{
+static char* keywords[] = { "boundsRect", "clipRect", "sides", "grays", "count", 0 };
+	PyObject* pyBounds;
+	PyObject* pyClip;
+	PyObject* pySides;
+	PyObject* pyGrays;
+	PyObject* pyCount = NULL;
+	NSRect boundsRect;
+	NSRect clipRect;
+	NSRectEdge* sides;
+	float* grays;
+	int sidesCount;
+	int graysCount;
+	int sidesToken;
+	int graysToken;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOO|O", keywords, &pyBounds, &pyClip, &pySides, &pyGrays, &pyCount)) {
+		return NULL;
+	}
+
+	if (PyObjC_PythonToObjC(@encode(NSRect), pyBounds, &boundsRect) == -1) {
+		return NULL;
+	}
+	if (PyObjC_PythonToObjC(@encode(NSRect), pyClip, &clipRect) == -1) {
+		return NULL;
+	}
+
+	sidesToken = PyObjC_PythonToCArray(
+		@encode(NSRectEdge), pySides, pyCount, (void**)&sides, &sidesCount);
+
+	if (sidesToken == -1) return NULL;
+
+	graysToken = PyObjC_PythonToCArray(
+		@encode(id), pyGrays, pyCount, (void**)&grays, &graysCount);
+
+	if (graysToken == -1)  {
+		PyObjC_FreeCArray(sidesToken, sides);
+		return NULL;
+	}
+
+	if (graysCount != sidesCount) {
+		PyErr_Format(PyExc_ValueError,
+				"Passing %d sides and %d grays",
+				sidesCount, graysCount);
+		PyObjC_FreeCArray(sidesToken, sides);
+		PyObjC_FreeCArray(graysToken, grays);
+		return NULL;
+	}
+		
+
+	PyObjC_DURING
+		NSDrawTiledRects(boundsRect, clipRect, sides, grays, sidesCount);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	PyObjC_FreeCArray(sidesToken, sides);
+	PyObjC_FreeCArray(graysToken, grays);
+
+	if (PyErr_Occurred()) {
+		return NULL;
+	}
+
+	Py_INCREF(Py_None);
+	return Py_None; 
+}
+
+static PyObject*
+objc_NSDrawColorTiledRects(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
+{
+static char* keywords[] = { "boundsRect", "clipRect", "sides", "grays", "count", 0 };
+	PyObject* pyBounds;
+	PyObject* pyClip;
+	PyObject* pySides;
+	PyObject* pyColors;
+	PyObject* pyCount = NULL;
+	NSRect boundsRect;
+	NSRect clipRect;
+	NSRectEdge* sides;
+	id* colors;
+	int sidesCount;
+	int colorsCount;
+	int sidesToken;
+	int colorsToken;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "OOOO|O", keywords, &pyBounds, &pyClip, &pySides, &pyColors, &pyCount)) {
+		return NULL;
+	}
+
+	if (PyObjC_PythonToObjC(@encode(NSRect), pyBounds, &boundsRect) == -1) {
+		return NULL;
+	}
+	if (PyObjC_PythonToObjC(@encode(NSRect), pyClip, &clipRect) == -1) {
+		return NULL;
+	}
+
+	sidesToken = PyObjC_PythonToCArray(
+		@encode(NSRectEdge), pySides, pyCount, (void**)&sides, &sidesCount);
+
+	if (sidesToken == -1) return NULL;
+
+	colorsToken = PyObjC_PythonToCArray(
+		@encode(id), pyColors, pyCount, (void**)&colors, &colorsCount);
+
+	if (colorsToken == -1)  {
+		PyObjC_FreeCArray(sidesToken, sides);
+		return NULL;
+	}
+
+	if (colorsCount != sidesCount) {
+		PyErr_Format(PyExc_ValueError,
+				"Passing %d sides and %d colors",
+				sidesCount, colorsCount);
+		PyObjC_FreeCArray(sidesToken, sides);
+		PyObjC_FreeCArray(colorsToken, colors);
+		return NULL;
+	}
+		
+
+	PyObjC_DURING
+		NSDrawColorTiledRects(boundsRect, clipRect, sides, colors, sidesCount);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	PyObjC_FreeCArray(sidesToken, sides);
+	PyObjC_FreeCArray(colorsToken, colors);
+
+	if (PyErr_Occurred()) {
+		return NULL;
+	}
+
+	Py_INCREF(Py_None);
+	return Py_None; 
+}
+
+static PyObject* 
+objc_NSWindowListForContext(
+	PyObject* self __attribute__((__unused__)),
+	PyObject* args,
+	PyObject* kwds)
+{
+	static char* keywords[] = { "context", "count", NULL };
+	int context;
+	int size;
+	int* list;
+	PyObject* result;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "ii", keywords, &context, &size)) {
+		return NULL;
+	}
+
+	list = PyMem_Malloc(sizeof(int)*size);
+	if (list == NULL) {
+		PyErr_NoMemory();
+		return 0;
+	}
+	memset(list, 0, sizeof(int)*size);
+
+	PyObjC_DURING
+		NSWindowListForContext(context, size, list);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	if (PyErr_Occurred()) {
+		PyMem_Free(list);
+		return NULL;
+	}
+
+	result = PyObjC_CArrayToPython(@encode(int), list, size);
+	PyMem_Free(list);
+	return result;
+}
+
+static PyObject* 
+objc_NSWindowList(
+	PyObject* self __attribute__((__unused__)),
+	PyObject* args,
+	PyObject* kwds)
+{
+	static char* keywords[] = { "count", NULL };
+	int size;
+	int* list;
+	PyObject* result;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "i", keywords, &size)) {
+		return NULL;
+	}
+
+	list = PyMem_Malloc(sizeof(int)*size);
+	if (list == NULL) {
+		PyErr_NoMemory();
+		return 0;
+	}
+	memset(list, 0, sizeof(int)*size);
+
+	PyObjC_DURING
+		NSWindowList(size, list);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	if (PyErr_Occurred()) {
+		PyMem_Free(list);
+		return NULL;
+	}
+
+	result = PyObjC_CArrayToPython(@encode(int), list, size);
+	PyMem_Free(list);
+	return result;
+}
+
+static PyObject* 
+objc_NSAvailableWindowDepths(
+	PyObject* self __attribute__((__unused__)),
+	PyObject* args,
+	PyObject* kwds)
+{
+	static char* keywords[] = { NULL };
+	int size;
+	const int* list;
+	PyObject* result;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "", keywords)) {
+		return NULL;
+	}
+
+	PyObjC_DURING
+		list = NSAvailableWindowDepths();
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+		list = NULL;
+	PyObjC_ENDHANDLER
+
+	if (list == NULL && PyErr_Occurred()) {
+		return NULL;
+	}
+	size = 0;
+	if (list != NULL) {
+		for (size=0; list[size] != 0; size++) ;
+		size ++;
+	}
+
+	result = PyObjC_CArrayToPython(@encode(int), (int*)list, size);
+	return result;
+}
+
+static PyObject* 
+objc_NSBestDepth(
+	PyObject* self __attribute__((__unused__)),
+	PyObject* args,
+	PyObject* kwds)
+{
+	static char* keywords[] = { "colorSpace", "bps", "bpp", "planar" };
+	PyObject* pyColorSpace;
+	id colorSpace;
+	int bps;
+	int bpp;
+	PyObject* pyPlanar;
+	BOOL planarVal; 
+	BOOL exactMatch;
+	NSWindowDepth bestDepth;
+	PyObject* result;
+	PyObject* v;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "OiiO", keywords, &pyColorSpace, &bps, &bpp, &pyPlanar)) {
+		return NULL;
+	}
+	
+	colorSpace = PyObjC_PythonToId(pyColorSpace);
+	planarVal = PyObject_IsTrue(pyPlanar);
+
+	PyObjC_DURING
+		bestDepth = NSBestDepth(colorSpace, bps, bpp, planarVal, &exactMatch);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	if (PyErr_Occurred()) {
+		return NULL;
+	}
+
+	result = PyTuple_New(2);
+	if (result == NULL) return NULL;
+
+	v = PyObjC_ObjCToPython(@encode(NSWindowDepth), &bestDepth);
+	if (v == NULL) {
+		Py_DECREF(result);
+		return NULL;
+	}
+
+	PyTuple_SET_ITEM(result, 0, v);
+
+	v = PyBool_FromLong(exactMatch);
+	if (v == NULL) {
+		Py_DECREF(result);
+		return NULL;
+	}
+
+	PyTuple_SET_ITEM(result, 1, v);
+
+	return result;
+}
+
+static PyObject* 
+objc_NSRectClipList(
+	PyObject* self __attribute__((__unused__)),
+	PyObject* args,
+	PyObject* kwds)
+{
+	static char* keywords[] = { "rects", "count", NULL };
+	PyObject* pyList;
+	PyObject* pyCount = NULL;
+	NSRect* rects;
+	int count;
+	int arrayToken;
+
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "O|O", keywords, &pyList, &pyCount)) {
+		return NULL;
+	}
+
+	arrayToken = PyObjC_PythonToCArray(
+		@encode(NSRect), pyList, pyCount, (void**)&rects, &count);
+	if (arrayToken == -1) return NULL;
+
+	PyObjC_DURING
+		NSRectClipList(rects, count);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+	PyObjC_ENDHANDLER
+
+	PyObjC_FreeCArray(arrayToken, rects);
+
+	if (PyErr_Occurred()) return NULL;
+
+	Py_INCREF(Py_None);
+	return Py_None;
+}
+
+static PyObject*
+objc_NSGetWindowServerMemory(
+	PyObject* self __attribute__((__unused__)), 
+	PyObject* args, 
+	PyObject* kwds)
 {
 static char* keywords[] = { "context", "windowDumpStream", NULL };
 	int context;
@@ -285,7 +863,7 @@ static char* keywords[] = { "context", "windowDumpStream", NULL };
 		return NULL;
 	}
 
-	NS_DURING
+	PyObjC_DURING
 		if (doDumpStream) {
 			res = NSGetWindowServerMemory(
 				context, &virtualMemory, &windowBackingMemory,
@@ -295,10 +873,12 @@ static char* keywords[] = { "context", "windowDumpStream", NULL };
 				context, &virtualMemory, &windowBackingMemory,
 				NULL);
 		}
-	NS_HANDLER
+
+	PyObjC_HANDLER
 		res = 0;
-		ObjCErr_FromObjC(localException);
-	NS_ENDHANDLER
+		PyObjCErr_FromObjC(localException);
+
+	PyObjC_ENDHANDLER
 
 	if (PyErr_Occurred()) {
 		return NULL;
@@ -331,7 +911,7 @@ static char* keywords[] = { "context", "windowDumpStream", NULL };
 
 	PyTuple_SET_ITEM(result, 2, v);
 
-	v = ObjC_IdToPython(windowDumpStream);
+	v = PyObjC_IdToPython(windowDumpStream);
 	if (v == NULL) {
 		Py_DECREF(result);
 		return NULL;
@@ -342,62 +922,111 @@ static char* keywords[] = { "context", "windowDumpStream", NULL };
 	return result;
 }
 
-	
-
-
-#ifdef GNUSTEP
-#include "_App_Functions.GNUstep.inc"
-
-#else /* !GNUSTEP */
-
-#if MAC_OS_X_VERSION_10_2 <= MAC_OS_X_VERSION_MAX_ALLOWED
 #include "_App_Functions.inc"
-#endif
-
-#endif /* !GNUSTEP */
+#include "_App_Classes.inc"
 
 static PyMethodDef appkit_methods[] = {
 	{ 
 		"NSApplicationMain", 
 		(PyCFunction)objc_NSApplicationMain, 
 		METH_VARARGS|METH_KEYWORDS, 
-		NULL
+		"int NSApplicationMain(int argc, const char *argv[]);"
 	},
 	{ 
 		"NSApp", 
 		(PyCFunction)objc_NSApp, 
 		METH_VARARGS|METH_KEYWORDS, 
-		NULL
+		"NSApplication* NSApp(void);"
 	},
 	{ 
 		"NSCountWindows", 
 		(PyCFunction)objc_NSCountWindows, 
 		METH_VARARGS|METH_KEYWORDS, 
-		NULL
+		"void NSCountWindows(int *count);"
+	},
+	{ 
+		"NSWindowList", 
+		(PyCFunction)objc_NSWindowList, 
+		METH_VARARGS|METH_KEYWORDS, 
+		"void NSWindowList(int size, int list[]);"
+	},
+	{ 
+		"NSWindowListForContext", 
+		(PyCFunction)objc_NSWindowListForContext, 
+		METH_VARARGS|METH_KEYWORDS, 
+		"void NSWindowListForContext(int context, int size, int list[]);"
 	},
 	{ 
 		"NSCountWindowsForContext", 
 		(PyCFunction)objc_NSCountWindowsForContext, 
 		METH_VARARGS|METH_KEYWORDS, 
-		NULL
+		"void NSCountWindowsForContext(int context, int *count);"
 	},
 	{
 	        "NSRectFillList",
 		(PyCFunction)objc_NSRectFillList,
-		METH_VARARGS,
-		NULL
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSRectFillList(const NSRect *rects, int count);"
+	},
+	{
+	        "NSBestDepth",
+		(PyCFunction)objc_NSBestDepth,
+		METH_VARARGS|METH_KEYWORDS,
+		"NSWindowDepth NSBestDepth(NSString *colorSpace, int bps, int bpp, BOOL planar, BOOL *exactMatch);"
 	},
 	{
 	        "NSAvailableWindowDepths",
 		(PyCFunction)objc_NSAvailableWindowDepths,
-		METH_VARARGS,
-		NULL
+		METH_VARARGS|METH_KEYWORDS,
+		"int* NSAvailableWindowDepths(void);"
+	},
+	{
+	        "NSRectClipList",
+		(PyCFunction)objc_NSRectClipList,
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSRectClipList(const NSRect *rects, int count);"
+	},
+	{
+	        "NSDrawTiledRects",
+		(PyCFunction)objc_NSDrawTiledRects,
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSDrawTiledRects(NSRect boundsRect, NSRect clipRect, const NSRectEdge* sides, const float* grays, int count);"
+	},
+	{
+	        "NSDrawColorTiledRects",
+		(PyCFunction)objc_NSDrawColorTiledRects,
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSDrawColorTiledRects(NSRect boundsRect, NSRect clipRect, const NSRectEdge* sides, const NSColor** colors, int count);"
+	},
+	{
+	        "NSRectFillListWithColors",
+		(PyCFunction)objc_NSRectFillListWithColors,
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSRectFillListWithColors(const NSRect *rects, NSColor **colors, int count);"
+	},
+	{
+	        "NSRectFillListWithColorsUsingOperation",
+		(PyCFunction)objc_NSRectFillListWithColorsUsingOperation,
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSRectFillListWithColorsUsingOperation(const NSRect *rects, NSColor **colors, int count, NSCompositingOperation op)"
+	},
+	{
+	        "NSRectFillListWithGrays",
+		(PyCFunction)objc_NSRectFillListWithGrays,
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSRectFillListWithGrays(const NSRect *rects, const float *grays, int count);"
+	},
+	{
+	        "NSRectFillListUsingOperation",
+		(PyCFunction)objc_NSRectFillListUsingOperation,
+		METH_VARARGS|METH_KEYWORDS,
+		"void NSRectFillListUsingOperation(const NSRect *rects, int count, NSCompositingOperation op);"
 	},
 	{
 		"NSGetWindowServerMemory",
 		(PyCFunction)objc_NSGetWindowServerMemory,
-		METH_VARARGS,
-		NULL
+		METH_VARARGS|METH_KEYWORDS,
+		"int NSGetWindowServerMemory(int context, int *virtualMemory, int *windowBackingMemory, NSString **windowDumpString);"
 	},
 
 	METHOD_TABLE_ENTRIES
@@ -406,53 +1035,12 @@ static PyMethodDef appkit_methods[] = {
 };
 
 PyDoc_STRVAR(appkit_doc,
-"Cocoa._Foundation defines constants, types and global functions used by "
-"Cocoa.Foundation."
+"AppKit._AppKit defines constants, types and global functions used by "
+"AppKit"
 );
 
-
-/* TODO:
- * actual variables: 
- * - NSApp
- *
- * floats:
- NSColor-Grayscale Values
-
- const float NSWhite;
- const float NSLightGray;
- const float NSDarkGray;
- const float NSBlack;
-
- NSFont-PostScript Transformation Matrix
-
- const float *NSFontIdentityMatrix;
-
- Discussion
-
- NSFontIdentityMatrix is a transformation matrix useful as a parameter to the NSFont method fontWithName:matrix: .
-
- NSWindow-Sizes
-
- NSSize NSIconSize;
- NSSize NSTokenSize;
-
-
- */
-
-
-#ifdef GNUSTEP
-
-#include "_App_Enum.GNUstep.inc"
-#include "_App_Str.GNUstep.inc"
-
-#else /* !GNUSTEP */
-
-#if MAC_OS_X_VERSION_10_2 <= MAC_OS_X_VERSION_MAX_ALLOWED
 #include "_App_Enum.inc"
 #include "_App_Str.inc"
-#endif
-
-#endif /* !GNUSTEP */
 
 /*
  * Manually added, will be automatic in next version of generator script
@@ -537,10 +1125,74 @@ struct uchar_table {
 };
 
 
+static int 
+fontMatrix(PyObject* d, const char* name, const float* value)
+{
+	PyObject* v;
+	int i;
+
+	if (value == NULL) {
+		return PyDict_SetItemString(d, (char*)name, Py_None);
+	}
+	v = PyTuple_New(6);
+	if (v == NULL) {
+		return -1;
+	}
+
+	for (i = 0; i < 6; i++) {
+		PyObject* t;
+
+		t = PyFloat_FromDouble(value[i]);
+		if (t == NULL) {
+			Py_DECREF(v);
+			return -1;
+		}
+		PyTuple_SET_ITEM(v, i, t);
+	}
+	
+	if (PyDict_SetItemString(d, (char*)name, v) == -1) {
+		Py_DECREF(v);
+		return -1;
+	}
+	Py_DECREF(v);
+	return 0;
+}
+
+#include "_AppKitMapping_NSApplication.m"
+#include "_AppKitMapping_NSATSTypeSetter.m"
+#include "_AppKitMapping_NSBezierPath.m"
+#include "_AppKitMapping_NSBitmap.m"
+#include "_AppKitMapping_NSBitmapImageRep.m"
+#include "_AppKitMapping_NSFont.m"
+#include "_AppKitMapping_NSGraphicsContext.m"
+#include "_AppKitMapping_NSLayoutManager.m"
+#include "_AppKitMapping_NSMatrix.m"
+#include "_AppKitMapping_NSMovie.m"
+#include "_AppKitMapping_NSOpenGLContext.m"
+#include "_AppKitMapping_NSOpenGLPixelFormat.m"
+#include "_AppKitMapping_NSQuickDrawView.m"
+#include "_AppKitMapping_NSSimpleHorizontalTypesetter.m"
+#include "_AppKitMapping_NSView.m"
+#include "_AppKitMapping_NSWindow.m"
+
+static const char* NSAffineTransformStruct_name = "AppKit.NSAffineTransformStruct";
+static const char* NSAffineTransformStruct_doc = "struct NSAffineTransformStruct (m11, m12, m21, m22, tX, tY)";
+static const char* NSAffineTransformStruct_fields[] = {
+	"m11",
+	"m12",
+	"m21",
+	"m22",
+	"tX",
+	"tY"
+};
+
+void init_AppKit(void);
 
 void init_AppKit(void)
 {
-	PyObject *m, *d;
+	PyObject *m, *d, *v;
+	CFBundleRef bundle;
+	const char** name;
 
 	m = Py_InitModule4("_AppKit", appkit_methods, appkit_doc, 
 		NULL, PYTHON_API_VERSION);
@@ -549,130 +1201,60 @@ void init_AppKit(void)
 	d = PyModule_GetDict(m);
 	if (!d) return;
 
-	if (ObjC_ImportModule(m) < 0) {
+	if (PyObjC_ImportAPI(m) < 0) {
 		return;
 	}
 
-	if (register_ints(d, enum_table) < 0) return;
-	if (register_strings(d, string_table) < 0) return;
-
-#ifdef GNUSTEP
-
-#	include "_App_Var.GNUstep.inc"
-
-#else /* !GNUSTEP */
-
-#if MAC_OS_X_VERSION_10_2 <= MAC_OS_X_VERSION_MAX_ALLOWED
-#	include "_App_Var.inc"
+#ifdef MACOSX
+	bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.AppKit"));
+#else
+	bundle = NULL;
 #endif
 
-#endif /* !GNUSTEP */
+	if (register_ints(d, enum_table) < 0) return;
+	if (register_variableList(d, bundle, string_table, (sizeof(string_table)/sizeof(string_table[0]))-1) < 0) return;
+
+	//CFRelease(bundle);
+
+#	include "_App_Var.inc"
+
 
 	/* And some troublesome definitions 
 	 * All of these found by 'grep #define *.h' in the AppKit header 
 	 * directory
 	 */
 
-#ifndef GNUSTEP
+#ifdef MACOSX
 	/* NSOpenGL.h */
-	INT_VAR(NSOPENGL_CURRENT_VERSION);
+	add_int(d, "NSOPENGL_CURRENT_VERSION", NSOPENGL_CURRENT_VERSION);
 
 	/* NSStatusBar.h */
-	INT_VAR(NSVariableStatusItemLength);
-	INT_VAR(NSSquareStatusItemLength);
+	add_int(d, "NSVariableStatusItemLength", NSVariableStatusItemLength);
+	add_int(d, "NSSquareStatusItemLength", NSSquareStatusItemLength);
 
 	/* NSTypesetter.h */
-	INT_VAR(NSBaselineNotSet);
-	INT_VAR(NumGlyphsToGetEachTime);
+	add_int(d, "NSBaselineNotSet", NSBaselineNotSet);
+	add_int(d, "NumGlyphsToGetEachTime", NumGlyphsToGetEachTime);
 #endif
 
 	/* NSWindow.h */
-	INT_VAR(NSNormalWindowLevel);
-	INT_VAR(NSFloatingWindowLevel);
-	INT_VAR(NSSubmenuWindowLevel);
-	INT_VAR(NSTornOffMenuWindowLevel);
-	INT_VAR(NSMainMenuWindowLevel);
-	INT_VAR(NSStatusWindowLevel);
-	INT_VAR(NSModalPanelWindowLevel);
-	INT_VAR(NSPopUpMenuWindowLevel);
-	INT_VAR(NSScreenSaverWindowLevel);
+	add_int(d, "NSNormalWindowLevel", NSNormalWindowLevel);
+	add_int(d, "NSFloatingWindowLevel", NSFloatingWindowLevel);
+	add_int(d, "NSSubmenuWindowLevel", NSSubmenuWindowLevel);
+	add_int(d, "NSTornOffMenuWindowLevel", NSTornOffMenuWindowLevel);
+	add_int(d, "NSMainMenuWindowLevel", NSMainMenuWindowLevel);
+	add_int(d, "NSStatusWindowLevel", NSStatusWindowLevel);
+	add_int(d, "NSModalPanelWindowLevel", NSModalPanelWindowLevel);
+	add_int(d, "NSPopUpMenuWindowLevel", NSPopUpMenuWindowLevel);
+	add_int(d, "NSScreenSaverWindowLevel", NSScreenSaverWindowLevel);
 
-
-	INT_VAR(NSNoCellMask);
-	INT_VAR(NSContentsCellMask);
-	INT_VAR(NSPushInCellMask);
-	INT_VAR(NSChangeGrayCellMask);
-	INT_VAR(NSChangeBackgroundCellMask);
-	INT_VAR(NSColorPanelGrayModeMask);
-	INT_VAR(NSColorPanelRGBModeMask);
-	INT_VAR(NSColorPanelCMYKModeMask);
-	INT_VAR(NSColorPanelHSBModeMask);
-	INT_VAR(NSColorPanelCustomPaletteModeMask);
-	INT_VAR(NSColorPanelColorListModeMask);
-	INT_VAR(NSColorPanelWheelModeMask);
-#ifndef GNUSTEP
-	INT_VAR(NSColorPanelCrayonModeMask);
-#endif
-	INT_VAR(NSColorPanelAllModesMask);
-	INT_VAR(NSLeftMouseDownMask);
-	INT_VAR(NSLeftMouseUpMask);
-	INT_VAR(NSRightMouseDownMask);
-	INT_VAR(NSRightMouseUpMask);
-	INT_VAR(NSMouseMovedMask);
-	INT_VAR(NSLeftMouseDraggedMask);
-	INT_VAR(NSRightMouseDraggedMask);
-	INT_VAR(NSMouseEnteredMask);
-	INT_VAR(NSMouseExitedMask);
-	INT_VAR(NSKeyDownMask);
-	INT_VAR(NSKeyUpMask);
-	INT_VAR(NSFlagsChangedMask);
-	INT_VAR(NSAppKitDefinedMask);
-	INT_VAR(NSSystemDefinedMask);
-	INT_VAR(NSApplicationDefinedMask);
-	INT_VAR(NSPeriodicMask);
-	INT_VAR(NSCursorUpdateMask);
-	INT_VAR(NSScrollWheelMask);
-	INT_VAR(NSOtherMouseDownMask);
-	INT_VAR(NSOtherMouseUpMask);
-	INT_VAR(NSOtherMouseDraggedMask);
-	INT_VAR(NSAnyEventMask);
-	INT_VAR(NSAlphaShiftKeyMask);
-	INT_VAR(NSShiftKeyMask);
-	INT_VAR(NSControlKeyMask);
-	INT_VAR(NSAlternateKeyMask);
-	INT_VAR(NSCommandKeyMask);
-	INT_VAR(NSNumericPadKeyMask);
-	INT_VAR(NSHelpKeyMask);
-	INT_VAR(NSFunctionKeyMask);
-	INT_VAR(NSItalicFontMask);
-	INT_VAR(NSBoldFontMask);
-	INT_VAR(NSUnboldFontMask);
-	INT_VAR(NSNonStandardCharacterSetFontMask);
-	INT_VAR(NSNarrowFontMask);
-	INT_VAR(NSExpandedFontMask);
-	INT_VAR(NSCondensedFontMask);
-	INT_VAR(NSSmallCapsFontMask);
-	INT_VAR(NSPosterFontMask);
-	INT_VAR(NSCompressedFontMask);
-	INT_VAR(NSFixedPitchFontMask);
-	INT_VAR(NSUnitalicFontMask);
-	INT_VAR(NSUtilityWindowMask);
-	INT_VAR(NSDocModalWindowMask);
-#ifndef GNUSTEP
-	INT_VAR(NSNonactivatingPanelMask);
-#endif
-	INT_VAR(NSBorderlessWindowMask);
-	INT_VAR(NSTitledWindowMask);
-	INT_VAR(NSClosableWindowMask);
-	INT_VAR(NSMiniaturizableWindowMask);
-	INT_VAR(NSResizableWindowMask);
-#ifndef GNUSTEP
-	INT_VAR(NSTexturedBackgroundWindowMask);
+#ifdef GNU_RUNTIME
+	add_int(d, "NSOutlineViewDropOnItemIndex", 
+			NSOutlineViewDropOnItemIndex);
 #endif
 
 	{
 	  struct uchar_table*  cur = g_unicode_characters;
-	  PyObject* v;
 	  int       res;
 
 	  for (; cur->name != NULL; cur++) {
@@ -683,4 +1265,69 @@ void init_AppKit(void)
 	          if (res < 0) return;
 	  }
 	}
+
+	/* Some special constants */
+#ifdef GNU_RUNTIME
+	/* ARGH, when I look at it in the debugger, NSFontIdentityMatrix 
+	 * seems to have the value of the first entry in the matrix,
+	 * instead of being the address of the array...
+	 */
+	fontMatrix(d, "NSFontIdentityMatrix", (float*)&NSFontIdentityMatrix);
+
+#else
+
+	fontMatrix(d, "NSFontIdentityMatrix", NSFontIdentityMatrix);
+#endif
+
+	/* Struct definitions */
+	v = PyObjC_RegisterStructType(@encode(NSAffineTransformStruct),
+			NSAffineTransformStruct_name, 
+			NSAffineTransformStruct_doc, 
+			NULL,
+			6, NSAffineTransformStruct_fields);
+	if (v == NULL) return;
+	PyDict_SetItemString(d, "NSAffineTransformStruct", v);
+	Py_DECREF(v);
+
+	/* register other method mappings */
+	if (_pyobjc_install_NSApplication(d) < 0) return;
+	if (_pyobjc_install_NSATSTypesetter() < 0) return;
+	if (_pyobjc_install_NSBezierPath() < 0) return;
+	if (_pyobjc_install_NSBitmap() < 0) return;
+	if (_pyobjc_install_NSBitmapImageRep() < 0) return;
+	if (_pyobjc_install_NSFont() < 0) return;
+	if (_pyobjc_install_NSGraphicsContext() < 0) return;
+	if (_pyobjc_install_NSLayoutManager() < 0) return;
+	if (_pyobjc_install_NSMatrix() < 0) return;
+	if (_pyobjc_install_NSMovie() < 0) return;
+	if (_pyobjc_install_NSOpenGLContext() < 0) return;
+	if (_pyobjc_install_NSOpenGLPixelFormat() < 0) return;
+	if (_pyobjc_install_NSQuickDrawView() < 0) return;
+	if (_pyobjc_install_NSSimpleHorizontalTypesetter() < 0) return;
+	if (_pyobjc_install_NSView() < 0) return;
+	if (_pyobjc_install_NSWindow() < 0) return;
+
+	/*
+	 * On OSX finding the bundle/framework for a class is *very* expensive.
+	 * We therefore have a cache of names of classes that are present in
+	 * the AppKit framework. That way we don't have to ask for the 
+	 * bundle/framework as often, which speeds up program initialization.
+	 *
+	 * On my (Ronald's) powerbook the difference is about 30% for 
+	 * 'python -c "import AppKit"' and this difference is also noticable
+	 * when starting GUI programs.
+	 */
+	v = PyString_FromString("AppKit");
+	for (name = gClassNames; *name != NULL; name++) {
+		PyObject* o;
+		Class cls = objc_lookUpClass(*name);
+		if (cls == NULL) continue;
+
+		o = PyObjCClass_New(cls);
+		if (o == NULL) return;
+
+		PyObject_SetAttrString(o, "__module__", v);
+		Py_DECREF(o);
+	}
+	Py_DECREF(v);
 }

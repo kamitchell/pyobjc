@@ -16,11 +16,14 @@ Introduction
 This document describes the coding style for PyObjC. Please use this style for
 new code and try apply this style to existing code while working on it.
 
+The management summary: 4-space indents in Python code, 1-TAB indents in C
+code.
+
 Python code
 -----------
 
 The coding style for core Python is used (see `PEP 8`_). For consistency with
-Cocoa we use mixed-case identifiers (like ``lookUpClass``). 
+Cocoa we use mixed-case identifiers (like ``lookUpClass``).
 
 PyObjC extensions to Apple frameworks should be clearly marked as such, 
 preferably by prefixing names with ``PyObjC`` or ``pyobjc``. This should make it
@@ -35,8 +38,13 @@ module should be documented in our documentation.
 C code
 ------
 
-The coding style for core Python is used (see `PEP 7`_). We use ``PyObjC`` instead
-of ``Py`` as the prefix for globally visible symbols.
+The coding style for core Python is used (see `PEP 7`_). We use ``PyObjC`` 
+instead of ``Py`` as the prefix for globally visible symbols.
+
+All (Objective-)C files in ``Modules/objc/`` should include ``"pyobjc.h"`` as
+their first include. The (Objective-)C files in the wrappers for frameworks
+should include ``"pyobjc-api.h"`` and should not use other include-files in
+``Modules/objc`` other than ``pyobjc-api.h`` and ``wrapper-const-table.h``.
 
 .. _`PEP 7`: http://www.python.org/peps/pep-0007.txt
 
@@ -65,8 +73,6 @@ in the DocUtils source tree.
 
         # Author: David Goodger
         # Contact: goodger@users.sourceforge.net
-        # Revision: $Revision: 1.3 $
-        # Date: $Date: 2003/04/03 20:20:43 $
         # Copyright: This module has been placed in the public domain.
 
 (2) Add a module level variable that indicates that ReST is used to format

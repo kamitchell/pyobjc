@@ -6,20 +6,15 @@ from Foundation import NSLocalizedString
 
 class TestNSLocalizedString(unittest.TestCase):
     def testBasic(self):
-        # This is mostly a regression tests, the function used to crash on 
+        # This is mostly a regression tests, the function used to crash on
         # this...
+        if objc.platform != 'MACOSX':
+            return
 
-        s = NSLocalizedString("hello world", "")
-        objc.recycle_autorelease_pool()
-        self.assertEquals (s, "hello world")
-        self.assertEquals (s.nsstring().description(), "hello world")
-
-        
-def suite():
-    suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestNSLocalizedString))
-    return suite
+        s = NSLocalizedString(u"hello world", u"")
+        objc.recycleAutoreleasePool()
+        self.assertEquals (s, u"hello world")
+        self.assertEquals (s.nsstring().description(), u"hello world")
 
 if __name__ == '__main__':
     unittest.main( )
-

@@ -1,5 +1,8 @@
-from Foundation import NSObject, NSObject
+import objc
+from Foundation import *
+from AppKit import *
 from PyObjCTools import NibClassBuilder, AppHelper
+
 
 NibClassBuilder.extractClasses("MainMenu")
 

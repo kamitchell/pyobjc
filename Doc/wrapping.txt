@@ -24,9 +24,18 @@ The code for loading a framework and exporting its classes is pretty simple::
       bundle_path='/path/to/MyFramework.framework')
    del objc
 
+In general you should not load frameworks this way, but you should write a
+package or module to do this for you (e.g. place this code in ``MyFramework.py``
+or ``MyFramework/__init__.py``. This makes it possible to 
+``import MyFramework`` which is much more convenient.
+
 If your class library does not require helper functions for some methods this
 is all that is needed.
 
+It is currently necessary to import the wrapper modules for all frameworks that
+are used by your framework. Not doing this may lead to subtle bugs in other
+parts of the code. This is a limitation of PyObjC that will be 
+lifted in a future version.
 
 Wrapping global functions and constants
 ---------------------------------------
@@ -35,7 +44,15 @@ The code above only provides wrappers for Objective-C classes, if the library
 also defines global functions and/or constants you'll have to write an 
 extension module to make these available to Python.
 
-You can use the PyObjC C-API (to be documented) when writing this module.
+You can use the PyObjC C-API (to be documented) when writing this module. With
+some luck you can adapt the scripts in ``Scripts/CodeGenerators`` to generate
+this module for you. These scripts are both very rough and tuned for the Apple
+headers, so YMMV.
+
+Note that we currently do not install the ``pyobjc-api.h`` header, you'll have
+to copy it from the source-tree until we do. This header is not installed 
+because the interface is not yet stable, please let us know if you want to
+use the API.
 
 Pointer arguments
 -----------------
@@ -45,6 +62,8 @@ an 'id') require more work. If the pointer arguments are used to pass a single
 value to/from a function ('pass-by-reference arguments') you'll just have to 
 provide more specific method signatures. In other cases you'll have to write
 custom wrappers for these methods.
+
+Check ``Modules/Foundation`` for examples of these custom wrappers.
 
 Pass-by-reference arguments
 ...........................
@@ -64,25 +83,28 @@ Given the following class interface::
 The compiler will generate a method signature for this method and this can 
 be accessed from Python using the property 'signature' of Objective-C methods. 
 You can also just make up the signature, which is quite easy once you get the
-hang of it. The signature for this method is 'v@:^@@'.
+hang of it. The signature for this method is 'v@:^@@'.  See `Type Encodings`_
+for the list of valid encoding characters for the Apple Objective-C runtime.
+
+.. _`Type Encodings`: http://developer.apple.com/documentation/Cocoa/Conceptual/ObjectiveC/RuntimeOverview/chapter_4_section_6.html
 
 Let's say the first argument is an output parameter. Output parameters are 
 denoted in the signature string using the character 'o' before the actual
 argument signature. The 'correct' signature for method is therefore 'v@:o^@@'.
-The following code tells the brigde about this better method signature::
+The following code tells the bridge about this better method signature::
 
    import objc
-   objc.set_signature_for_selector("ClassName", "selector:withArguments:",
+   objc.setSignatureForSelector("ClassName", "selector:withArguments:",
    	"v@:o^@:@")
 
-To anotate method signatures you'll have to add a single character before all
+To annotate method signatures you'll have to add a single character before all
 '^' characters in the signature of a method. The characters are:
 
 - output parameter: o
 
-- input parameter: i
+- input parameter: n
 
-- input-output parameter: O
+- input-output parameter: N
 
 special wrappers
 ................
@@ -94,8 +116,20 @@ three functions: 1 to call the method from Python, 1 to call the superclass
 implementation of the method from Python and 1 to call a Python implementation
 of the method from Objective-C.
 
+You also must write a custom wrapper when the method has a variable number
+of arguments. It is often advisable to documented varargs method as 
+unsupported, or to support them only using a fixed number of arguments.
+
 For now it is best to check the source code for the wrappers for the Cocoa 
 class library for more information. We'll add documentation for this in the
 future.
 
-NOTE: It is likely that there will be changes w.r.t. the special wrappers.
+protocols
+.........
+
+If the framework defines any (informal) protocols you should add 
+``objc.informal_protocol`` objects for those protocols to your module. These
+can be defined in a submodule, as long as you arrange for that module to be
+loaded whenever someone imports your package.
+
+See ``Lib/Foundation/protocols.py`` for examples of protocol definitions.

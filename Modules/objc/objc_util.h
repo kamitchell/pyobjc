@@ -1,32 +1,43 @@
 #ifndef OBJC_UTIL
 #define OBJC_UTIL
 
-#include <Python.h>
 #include <Foundation/NSException.h>
+#define THREADSTATE_AUTORELEASEPOOL "__threadstate_autoreleasepool"
 
-extern PyObject* ObjCExc_error;
-extern PyObject* ObjCExc_noclass_error;
-extern PyObject* ObjCExc_internal_error;
+extern PyObject* PyObjCExc_Error;
+extern PyObject* PyObjCExc_NoSuchClassError;
+extern PyObject* PyObjCExc_InternalError;
+extern PyObject* PyObjCExc_UnInitDeallocWarning;
 
-int ObjCUtil_Init(PyObject* module);
+int PyObjCUtil_Init(PyObject* module);
 
-extern PyObject* ObjC_class_extender;
-int ObjC_AddConvenienceMethods(Class cls, PyObject* type_dict);
-int  ObjC_UpdateConvenienceMethods(PyObject* cls);
+void PyObjCErr_FromObjC(NSException* localException);
+void PyObjCErr_ToObjC(void);
 
-void ObjCErr_Set(PyObject* exc, char* fmt, ...);
-void ObjCErr_FromObjC(NSException* localException);
-void ObjCErr_ToObjC(void);
+void PyObjCErr_ToObjCWithGILState(PyGILState_STATE* state);
 
-PyObject* PyObjC_CallPython(id self, SEL selector, PyObject* arglist);
+NSException* PyObjCErr_AsExc(void);
 
-char* ObjC_strdup(const char* value);
+PyObject* PyObjC_CallPython(id self, SEL selector, PyObject* arglist, int* isAlloc);
+
+char* PyObjCUtil_Strdup(const char* value);
 
 #include <Foundation/NSMapTable.h>
-extern NSMapTableKeyCallBacks ObjC_PointerKeyCallBacks;
-extern NSMapTableValueCallBacks ObjC_PointerValueCallBacks;
-extern NSMapTableKeyCallBacks ObjC_PyObjectKeyCallBacks;
-extern NSMapTableValueCallBacks ObjC_PyObjectValueCallBacks;
+extern NSMapTableKeyCallBacks PyObjCUtil_PointerKeyCallBacks;
+extern NSMapTableValueCallBacks PyObjCUtil_PointerValueCallBacks;
 
+void    PyObjC_FreeCArray(int, void*);
+int     PyObjC_PythonToCArray(const char*, PyObject*, PyObject*, void**, int*);
+PyObject* PyObjC_CArrayToPython(const char*, void*, int);
+int     PyObjC_IsPythonKeyword(const char* word);
+
+
+extern int PyObjCRT_SimplifySignature(char* signature, char* buf, size_t buflen);
+
+int PyObjCObject_Convert(PyObject* object, void* pvar);
+int PyObjCClass_Convert(PyObject* object, void* pvar);
+int PyObjCSelector_Convert(PyObject* object, void* pvar);
+int PyObjC_ConvertBOOL(PyObject* object, void* pvar);
+int PyObjC_ConvertChar(PyObject* object, void* pvar);
 
 #endif /* OBJC_UTIL */

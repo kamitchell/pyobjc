@@ -6,11 +6,36 @@ documentation for details on how to use these functions and classes.
 """
 
 # Load the AddressBook bundle, and gather all classes defined there
-import objc
+import objc as _objc
 
-objc.loadBundle("AddressBook", globals(), bundle_path="/System/Library/Frameworks/AddressBook.framework")
+# AddressBook.framework has a dependency on AppKit.framework. Make sure we
+# load AppKit ourselves, otherwise we might not load the custom wrappers for it.
+import AppKit as _AppKit
 
 from _AddressBook import *
-del _AddressBook, objc
+if _objc.platform == 'MACOSX':
+    _objc.loadBundle(
+        "AddressBook",
+        globals(),
+        bundle_identifier=u'com.apple.AddressBook.framework',
+    )
+else:
+    _objc.loadBundle(
+        "AddressBook",
+        globals(),
+        bundle_path=_objc.pathForFramework(
+            u"/System/Library/Frameworks/AddressBook.framework",
+        ),
+    )
 
-# Define usefull utility methods here
+import protocols  # no need to export these, just register with PyObjC
+
+# Define useful utility methods here
+
+_objc.setSignatureForSelector('NSImagePickerController', 'setTarget:selector:userInfo:', 'v@:@:i')
+
+# Not entirely correct...
+_objc.setSignatureForSelector('ABAuthenticationInfo', 'appliesToRequest:', 'c@:@')
+_objc.setSignatureForSelector('ABAuthenticationInfo', 'applyToRequest:', 'c@:@')
+_objc.setSignatureForSelector('ABDAVQuery', 'buildRequest', '@@:')
+_objc.setSignatureForSelector('ABPerson', 'encodedDataForValue:charsetName:', '@@:@o^@')
