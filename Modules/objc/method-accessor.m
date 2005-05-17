@@ -3,74 +3,33 @@
  *	anObject.pyobjc_classMethods.description()
  * and
  *	anObject.pyobjc_instanceMethods.description()
- *
- * NOTES:
- *	Does not support reflection. That can be added when
- *	needed.
  */
 #include "pyobjc.h"
-#include "objc_support.h"
-
-static char* 
-flatten_signature(NSMethodSignature* sig, char* buf, int buflen)
-{
-	char* cur = buf;
-	int   curlen = buflen;
-	int   r;
-	int   i, len;
-
-	r = snprintf(cur, curlen, "%s", [sig methodReturnType]);
-	if (r >= curlen) goto error;
-	cur += r;
-	curlen -= r;
-
-	len = [sig numberOfArguments];
-	for (i = 0; i < len; i ++) {
-		r = snprintf(cur, curlen, "%s", [sig getArgumentTypeAtIndex:i]);
-		if (r >= curlen) goto error;
-		cur += r;
-		curlen -= r;
-	}
-	*cur = '\0';
-	return buf;
-
-error:
-	/* FIXME, however 1024 characters should be enough for any reasonable
-	 * signature. E.g. this can wait until we run into problems.
-	 */
-	PyErr_SetString(PyExc_MemoryError, "PyObC: extremely long signature");
-	return NULL;
-}
 
 static PyObject* 
 find_selector(PyObject* self, char* name, int class_method)
 {
-	SEL   sel = ObjCSelector_DefaultSelector(name);
-	id    objc_object;
+	SEL   sel = PyObjCSelector_DefaultSelector(name);
+	volatile id    objc_object;
 	NSMethodSignature* methsig;
 	char  buf[1024];
-	int   unbound_instance_method = 0;
+	volatile int   unbound_instance_method = 0;
 	char* flattened;
 
-	if (strcmp(name, "__class__") == 0) {
-		/* Someone does 'type(object.pybojc_instanceMethods)' */
-		Py_INCREF(self->ob_type);
-		return (PyObject*)self->ob_type;
-	}
 
 	if (name[0] == '_' && name[1] == '_') {
 		/*
 		 * FIXME: Some classes (NSFault, NSFinalProxy) crash hard
 		 * on these names
 		 */
-		ObjCErr_Set(PyExc_AttributeError,
+		PyErr_Format(PyExc_AttributeError,
 			"No selector %s", name);
 		return NULL;
 	}
 
 	if (PyObjCClass_Check(self)) {
 		objc_object = (id)PyObjCClass_GetClass(self);
-	
+
 		if (!class_method) {
 			unbound_instance_method = 1;
 		}
@@ -86,28 +45,48 @@ find_selector(PyObject* self, char* name, int class_method)
 			objc_object = GETISA(objc_object);
 		}
 	} else {
-		ObjCErr_Set(PyExc_TypeError,
+		PyErr_Format(PyExc_TypeError,
 			"Need Objective-C class or instance, got "
 			"a %s", self->ob_type->tp_name);
 		return NULL;
 	}
 
-	if (class_method && strcmp(((Class)objc_object)->name, "NSProxy") == 0){
+	if (objc_object == nil) {
+		PyErr_Format(PyExc_AttributeError,
+			"<nil> doesn't have attribute %s", name);
+		return NULL;
+	}
+
+
+	if (strcmp(GETISA(objc_object)->name, "_NSZombie") == 0) {
+		PyErr_Format(PyExc_AttributeError,
+			"Cannot access NSProxy.%s", name);
+		return NULL;
+	}
+
+	if (class_method && strcmp(((Class)objc_object)->name, "NSProxy") == 0 ){
 		if (sel == @selector(methodSignatureForSelector:)) {
-			ObjCErr_Set(PyExc_AttributeError,
+			PyErr_Format(PyExc_AttributeError,
 				"Cannot access NSProxy.%s", name);
 			return NULL;
 		}
 	}
 
-	if (unbound_instance_method) {
-		methsig = [objc_object instanceMethodSignatureForSelector:sel];
-	} else {
-		methsig = [objc_object methodSignatureForSelector:sel];
-	}
+
+	PyObjC_DURING
+		if (unbound_instance_method) {
+			methsig = [objc_object instanceMethodSignatureForSelector:sel];
+		} else {
+			methsig = [objc_object methodSignatureForSelector:sel];
+		}
+
+	PyObjC_HANDLER
+		methsig = nil;
+
+	PyObjC_ENDHANDLER
 
 	if (methsig == NULL) {
-		ObjCErr_Set(PyExc_AttributeError,
+		PyErr_Format(PyExc_AttributeError,
 			"No selector %s", name);
 		return NULL;
 	}
@@ -116,12 +95,13 @@ find_selector(PyObject* self, char* name, int class_method)
 		objc_object = GETISA(objc_object);
 	}
 
-	flattened = flatten_signature(methsig, buf, sizeof(buf));
+	flattened = PyObjC_NSMethodSignatureToTypeString(
+			methsig, buf, sizeof(buf));
 	if (flattened == NULL) {
 		return NULL;
 	}
 
-	return ObjCSelector_NewNative((Class)objc_object, sel,
+	return PyObjCSelector_NewNative((Class)objc_object, sel,
 		flattened, class_method);
 }
 
@@ -133,7 +113,7 @@ make_dict(PyObject* self, int class_method)
 	struct objc_method_list* mlist;
 	void* iterator;
 	char  buf[256];
-	id    objc_class;
+	Class    objc_class;
 	PyObject* bound_self;
 
 	if (PyObjCObject_Check(self)) {
@@ -143,9 +123,9 @@ make_dict(PyObject* self, int class_method)
 		}
 
 		if (class_method) {
-			cls = GETISA(GETISA(obj));
+			cls = GETISA(obj);
 			bound_self = (PyObject*)self->ob_type;
-			objc_class = GETISA(obj);
+			objc_class = GETISA(cls); 
 		} else {
 			cls = GETISA(obj);
 			objc_class = cls;
@@ -156,11 +136,12 @@ make_dict(PyObject* self, int class_method)
 		cls = PyObjCClass_GetClass(self);
 		objc_class = cls;
 		if (class_method) {
-			cls = GETISA(cls);
+			objc_class = GETISA(cls);
 			bound_self = self;
 		} else {
 			bound_self = NULL;
 		}
+
 	} else {
 		PyErr_BadInternalCall();
 		return NULL;
@@ -171,11 +152,11 @@ make_dict(PyObject* self, int class_method)
 		return NULL;
 	}
 
-	while (objc_class != NULL) {
+	while (objc_class != NULL && cls != NULL) {
 		iterator = NULL;
-		mlist = class_nextMethodList(objc_class, &iterator);
+		mlist = PyObjCRT_NextMethodList(objc_class, &iterator);
 		while (mlist != NULL) {
-			METHOD meth;
+			PyObjCRT_Method_t meth;
 			PyObject* v;
 			int i;
 
@@ -189,12 +170,12 @@ make_dict(PyObject* self, int class_method)
 				v = PyObject_GetAttrString(self, name);
 				if (v == NULL) {
 					PyErr_Clear();
-				} else if (!ObjCSelector_Check(v)) {
+				} else if (!PyObjCSelector_Check(v)) {
 					Py_DECREF(v);
 					v = NULL;
 				} else {
 					int cm;
-					cm = ((ObjCSelector*)v)->sel_flags & ObjCSelector_kCLASS_METHOD;
+					cm = ((PyObjCSelector*)v)->sel_flags & PyObjCSelector_kCLASS_METHOD;
 					if (!cm  != !class_method) {
 						Py_DECREF(v);
 						v = NULL;
@@ -202,8 +183,8 @@ make_dict(PyObject* self, int class_method)
 				}
 
 				if (v == NULL) {
-					v = ObjCSelector_NewNative(
-						objc_class, meth->method_name,
+					v = PyObjCSelector_NewNative(
+						cls, meth->method_name,
 						meth->method_types, class_method);
 					if (v == NULL) {
 						Py_DECREF(res);
@@ -212,16 +193,18 @@ make_dict(PyObject* self, int class_method)
 				}
 
 				if (PyDict_SetItemString(res, name, v) == -1) {
+					Py_DECREF(v); 
 					Py_DECREF(res);
 					return NULL;
 				}
 				Py_DECREF(v);
 
 			}
-			mlist = class_nextMethodList(objc_class, &iterator);
+			mlist = PyObjCRT_NextMethodList(objc_class, &iterator);
 		}
 
 		objc_class = ((Class)objc_class)->super_class;
+		cls = ((Class)cls)->super_class;
 	}
 
 	return res;
@@ -254,14 +237,48 @@ obj_getattro(ObjCMethodAccessor* self, PyObject* name)
 	int	  class_method;
 
 	if (!PyString_Check(name)) {
-		ObjCErr_Set(PyExc_TypeError, 
+		PyErr_Format(PyExc_TypeError, 
 			"Expecting string, got %s",
 			name->ob_type->tp_name);
 		return NULL;
 	}
 
 	if (strcmp(PyString_AS_STRING(name), "__dict__") == 0) {
-		return make_dict(self->base, self->class_method);
+
+		PyObject* dict;
+		dict = make_dict(self->base, self->class_method);
+		return dict;
+
+		/*
+		 * Ronald: I'd prefer to add the code below, because our 
+		 * __dict__ cannot be modified, but then dir() doesn't work.
+		 * The current version is save enough, but might give surprising
+		 * behaviour (you can change pyobjc_instancMethods.__dict__,
+		 * but those changes have no effect).
+		result  = PyDictProxy_New(dict);
+		Py_DECREF(dict);
+		return result;
+		 */
+	}
+
+	if (strcmp(PyString_AS_STRING(name), "__methods__") == 0) {
+		PyErr_SetString(PyExc_AttributeError,
+			"No such attribute: __methods__");
+		return NULL;
+	}
+
+	if (strcmp(PyString_AS_STRING(name), "__members__") == 0) {
+		PyErr_SetString(PyExc_AttributeError,
+			"No such attribute: __members__");
+		return NULL;
+	}
+
+
+	result = PyObject_GenericGetAttr((PyObject*)self, name);
+	if (result == NULL) {
+		PyErr_Clear();
+	} else {
+		return result;
 	}
 
 	/* First try to access through base, this way the method replacements
@@ -270,11 +287,11 @@ obj_getattro(ObjCMethodAccessor* self, PyObject* name)
 	result = PyObject_GetAttr(self->base, name);
 	if (result == NULL) {
 		PyErr_Clear();
-	} else if (!ObjCSelector_Check(result)) {
+	} else if (!PyObjCSelector_Check(result)) {
 		Py_DECREF(result);
 		result = NULL;
 	} else {
-		class_method = ((ObjCSelector*)result)->sel_flags & ObjCSelector_kCLASS_METHOD;
+		class_method = ((PyObjCSelector*)result)->sel_flags & PyObjCSelector_kCLASS_METHOD;
 		if (!self->class_method  == !class_method) {
 			/* NOTE: ! is used to normalize the values */
 			return result;
@@ -289,22 +306,22 @@ obj_getattro(ObjCMethodAccessor* self, PyObject* name)
 
 	if (self->class_method && PyObjCObject_Check(self->base)) {
 		/* Class method */
-		((ObjCSelector*)result)->sel_self = (PyObject*)(self->base->ob_type);
+		((PyObjCSelector*)result)->sel_self = (PyObject*)(self->base->ob_type);
 	} else if (!self->class_method && PyObjCClass_Check(self->base)) {
 		/* Unbound instance method */
-		((ObjCSelector*)result)->sel_self = NULL;
+		((PyObjCSelector*)result)->sel_self = NULL;
 	} else {
 		/* Bound instance method */
-		((ObjCSelector*)result)->sel_self = self->base;
+		((PyObjCSelector*)result)->sel_self = self->base;
 	}
-	Py_XINCREF(((ObjCSelector*)result)->sel_self);
+	Py_XINCREF(((PyObjCSelector*)result)->sel_self);
 	return result;
 }
 
 static PyObject*
 obj_repr(ObjCMethodAccessor* self)
 {
-	char buf[1024];
+	PyObject* rval;
 	PyObject* repr;
 
 	repr = PyObject_Repr(self->base);
@@ -314,15 +331,15 @@ obj_repr(ObjCMethodAccessor* self)
 		return NULL;
 	}
 
-	snprintf(buf, sizeof(buf), 
-		"<%s method-accessor for %s>",
-		self->class_method?"class":"instance",
+
+	rval = PyString_FromFormat("<%s method-accessor for %s>",
+		self->class_method ? "class" : "instance",
 		PyString_AS_STRING(repr));
 	Py_DECREF(repr);
-	return PyString_FromString(buf);
+	return rval;
 }
 
-static PyTypeObject ObjCMethodAccessor_Type = {
+PyTypeObject PyObjCMethodAccessor_Type = {
 	PyObject_HEAD_INIT(&PyType_Type)
 	0,					/* ob_size */
 	"objc.method_acces",			/* tp_name */
@@ -364,13 +381,20 @@ static PyTypeObject ObjCMethodAccessor_Type = {
 	0,					/* tp_alloc */
 	0,					/* tp_new */
 	0,		        		/* tp_free */
+	0,					/* tp_is_gc */
+	0,					/* tp_bases */
+	0,					/* tp_mro */
+	0,					/* tp_cache */
+	0, 					/* tp_subclasses */
+	0,					/* tp_weaklist */
+	0					/* tp_del */
 };
 
-PyObject* ObjCMethodAccessor_New(PyObject* base, int class_method)
+PyObject* PyObjCMethodAccessor_New(PyObject* base, int class_method)
 {
 	ObjCMethodAccessor* result;
 
-	result = PyObject_New(ObjCMethodAccessor, &ObjCMethodAccessor_Type);
+	result = PyObject_New(ObjCMethodAccessor, &PyObjCMethodAccessor_Type);
 	if (result == NULL) return NULL;
 
 	result->base = base;

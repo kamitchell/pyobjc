@@ -5,13 +5,24 @@ This module does not contain docstrings for the wrapped code, check Apple's
 documentation for details on how to use these functions and classes.
 """
 
-# Load the AddressBook bundle, and gather all classes defined there
-import objc 
-
-objc.loadBundle("PreferencePanes", globals(), bundle_path="/System/Library/Frameworks/PreferencePanes.framework")
-
-del objc
+# Load the PreferencePanes bundle, and gather all classes defined there
+import objc as _objc
+import AppKit as _AppKit
 from _PreferencePanes import *
-del _PreferencePanes
 
-# Define usefull utility methods here
+if _objc.platform == 'MACOSX':
+    _objc.loadBundle(
+        "PreferencePanes",
+        globals(),
+        bundle_identifier=u'com.apple.frameworks.preferencepanes',
+    )
+else:
+    _objc.loadBundle(
+        "PreferencePanes",
+        globals(),
+        bundle_path=_objc.pathForFramework(
+            u"/System/Library/Frameworks/PreferencePanes.framework",
+        ),
+    )
+
+# Define useful utility methods here

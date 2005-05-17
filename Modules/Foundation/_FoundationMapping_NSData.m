@@ -1,52 +1,34 @@
 /*
- * NSData mappings for special methods:
- * - initWithBytes_length_
- * - bytes
- * - mutableBytes
+ * NSData mappings for 'difficult' methods:
  *
- * Should add:
+ * -initWithBytes:length:
+ * +dataWithBytes:length:
+ * -bytes
+ * -mutableBytes
+ *
+ * TODO:
+ * -getBytes:
+ * -getBytes:length:
+ * -getBytes:range:
+ *
+ *
+ * Unsupported methods:
+ * +dataWithBytesNoCopy:length:
+ * +dataWithBytesNoCopy:length:freeWhenDone:
  * -initWithBytesNoCopy:length:
- * -initWithBytesNoCopy:length:freeWhenDone
- * +dataWith... version of above
- * -getBytes...
+ * -initWithBytesNoCopy:length:freeWhenDone:
+
+ * Undocumented methods:
+ * -initWithBytes:length:copy:freeWhenDone:bytesAreVM:
  * 
  */
 #include <Python.h>
 #include <Foundation/Foundation.h>
 #include "pyobjc-api.h"
 
-static PyObject* call_NSData_dataWithBytes_length_(
-		PyObject* method, PyObject* self, PyObject* arguments)
-{
-	char*     bytes;
-	int       bytes_len;
-	int       len;
-	PyObject* result;
-	id        objc_result;
 
-	if  (PyArg_ParseTuple(arguments, "t#i", &bytes, &bytes_len, &len) < 0) {
-		return NULL;
-	}
-
-	if (bytes_len < len) {
-		PyErr_SetString(PyExc_ValueError, "Not enough bytes in data");
-		return NULL;
-	}
-
-	NS_DURING
-		objc_result = objc_msgSend(PyObjCClass_GetClass(self),
-				@selector(dataWithBytes:length:),
-				bytes, len);
-		result = ObjC_IdToPython(objc_result);
-	NS_HANDLER
-		ObjCErr_FromObjC(localException);
-		result = NULL;
-	NS_ENDHANDLER
-
-	return result;
-}
-
-static PyObject* supercall_NSData_dataWithBytes_length_(
+static PyObject* 
+call_NSData_dataWithBytes_length_(
 		PyObject* method, PyObject* self, PyObject* arguments)
 {
 	char*     bytes;
@@ -56,7 +38,7 @@ static PyObject* supercall_NSData_dataWithBytes_length_(
 	struct objc_super super;
 	id        objc_result;
 
-	if  (PyArg_ParseTuple(arguments, "t#i", &bytes, &bytes_len, &len) < 0) {
+	if  (!PyArg_ParseTuple(arguments, "t#i", &bytes, &bytes_len, &len)) {
 		return NULL;
 	}
 
@@ -65,110 +47,84 @@ static PyObject* supercall_NSData_dataWithBytes_length_(
 		return NULL;
 	}
 
-	NS_DURING
-		PyObjC_InitSuperCls(&super, PyObjCClass_GetClass(self));
+	PyObjC_DURING
+		PyObjC_InitSuperCls(&super, 
+			PyObjCSelector_GetClass(method), 
+			PyObjCClass_GetClass(self));
 
 		objc_result = objc_msgSendSuper(&super,
-				@selector(dataWithBytes:length:),
+				PyObjCSelector_GetSelector(method),
 				bytes, len);
-		result = ObjC_IdToPython(objc_result);
-	NS_HANDLER
-		ObjCErr_FromObjC(localException);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
 		result = NULL;
-	NS_ENDHANDLER
+		objc_result = nil;
+	PyObjC_ENDHANDLER
+	
+	if (objc_result == nil && PyErr_Occurred()) return NULL;
+
+	result = PyObjC_IdToPython(objc_result);
 
 	return result;
 }
 
 
-static id imp_NSData_dataWithBytes_length_(id self, SEL sel,
-		char* data, unsigned len)
+static void 
+imp_NSData_dataWithBytes_length_(
+	void* cif __attribute__((__unused__)), 
+	void* resp, 
+	void** args, 
+	void* callable)
 {
+	id self = *(id*)args[0];
+	//SEL _meth = *(SEL*)args[1];
+	char* data = *(char**)args[2];
+	unsigned len = *(unsigned*)args[3];
+	id* pretval = (id*)resp;
+
 	PyObject* result;
-	PyObject* arglist;
-	id        objc_result;
+	PyObject* arglist = NULL;
+	PyObject* v;
 
-	arglist = PyTuple_New(2);
-	if (arglist == NULL) {
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	PyGILState_STATE state = PyGILState_Ensure();
 
-	PyTuple_SetItem(arglist, 0, PyString_FromStringAndSize(data, len));
-	PyTuple_SetItem(arglist, 1, PyInt_FromLong(len));
+	arglist = PyTuple_New(3);
+	if (arglist == NULL) goto error;
 
-	if (PyErr_Occurred()) {
-		Py_DECREF(arglist);
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	v = PyObjC_IdToPython(self);
+	if (v == NULL) goto error;
+	PyTuple_SetItem(arglist, 0, v); 
 
-	result = PyObjC_CallPython(self, sel, arglist);
-	Py_DECREF(arglist);
-	if (result == NULL) {
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	v = PyString_FromStringAndSize(data, len);
+	if (v == NULL) goto error;
+	PyTuple_SetItem(arglist, 1, v); 
 
-	objc_result = ObjC_PythonToId(result);
+	v = PyInt_FromLong(len);
+	if (v == NULL) goto error;
+	PyTuple_SetItem(arglist, 2, v); 
+
+
+	result = PyObject_Call((PyObject*)callable, arglist, NULL);
+	Py_DECREF(arglist); arglist = NULL;
+	if (result == NULL) goto error;
+
+	*pretval = PyObjC_PythonToId(result);
 	Py_DECREF(result);
 
-	if (PyErr_Occurred()) {
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	if (*pretval == nil && PyErr_Occurred()) goto error;
 
-	return objc_result;
+	PyGILState_Release(state);
+	return;
+
+error:
+	Py_XDECREF(arglist);
+	PyObjCErr_ToObjCWithGILState(&state);
+	*pretval = nil;
 }
+
 
 static PyObject* call_NSData_initWithBytes_length_(
-		PyObject* method, PyObject* self, PyObject* arguments)
-{
-	char*     bytes;
-	int       bytes_len;
-	int       len;
-	PyObject* result;
-	id        objc_result;
-	id	  self_obj;
-
-	if  (PyArg_ParseTuple(arguments, "t#i", &bytes, &bytes_len, &len) < 0) {
-		return NULL;
-	}
-
-	if (bytes_len < len) {
-		PyErr_SetString(PyExc_ValueError, "Not enough bytes in data");
-		return NULL;
-	}
-
-	self_obj =  PyObjCObject_GetObject(self);
-	NS_DURING
-		[self_obj retain];
-		objc_result = objc_msgSend(self_obj,
-				@selector(initWithBytes:length:),
-				bytes, len);
-		[self_obj release];
-		result = ObjC_IdToPython(objc_result);
-
-		/* XXX Ronald: If you try to use the result of 
-		 * PyObjCObject_GetObject(self) after the call to objc_msgSend 
-		 * it will crash with large enough values of len (>=32). 
-		 * Appearently the original self is recycled during the init.
-		 */
-		if (self != result) {
-			PyObjCObject_ClearObject(self);
-		}
-
-	NS_HANDLER
-		[self_obj release];
-		ObjCErr_FromObjC(localException);
-		result = NULL;
-	NS_ENDHANDLER
-
-	return result;
-}
-
-static PyObject* supercall_NSData_initWithBytes_length_(
-		PyObject* method, PyObject* self, PyObject* arguments)
+	PyObject* method, PyObject* self, PyObject* arguments)
 {
 	char*     bytes;
 	int       bytes_len;
@@ -177,7 +133,7 @@ static PyObject* supercall_NSData_initWithBytes_length_(
 	struct objc_super super;
 	id        objc_result;
 
-	if  (PyArg_ParseTuple(arguments, "t#i", &bytes, &bytes_len, &len) < 0) {
+	if  (!PyArg_ParseTuple(arguments, "t#i", &bytes, &bytes_len, &len)) {
 		return NULL;
 	}
 
@@ -186,284 +142,334 @@ static PyObject* supercall_NSData_initWithBytes_length_(
 		return NULL;
 	}
 
-	NS_DURING
+	PyObjC_DURING
 		PyObjC_InitSuper(&super,
-			PyObjCClass_GetClass((PyObject*)(self->ob_type)),
+			PyObjCSelector_GetClass(method),
 			PyObjCObject_GetObject(self));
 
 		objc_result = objc_msgSendSuper(&super,
-				@selector(initWithBytes:length:),
+				PyObjCSelector_GetSelector(method),
 				bytes, len);
-		result = ObjC_IdToPython(objc_result);
+		result = PyObjC_IdToPython(objc_result);
 
-		/* XXX Ronald: If you try to use the result of 
-		 * PyObjCObject_GetObject(self) after the call to objc_msgSend 
-		 * it will crash with large enough values of len (>=32). 
-		 * Appearently the original self is recycled during the init.
-		 */
-		if (self != result) {
-			PyObjCObject_ClearObject(self);
-		}
-	NS_HANDLER
-		ObjCErr_FromObjC(localException);
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
 		result = NULL;
-	NS_ENDHANDLER
+	PyObjC_ENDHANDLER
+
+	/* XXX Ronald: If you try to use the result of 
+	 * PyObjCObject_GetObject(self) after the call to objc_msgSend 
+	 * it will crash with large enough values of len (>=32). 
+	 * Appearently the original self is recycled during the init.
+	 */
+	if (self != result) {
+		PyObjCObject_ClearObject(self);
+	}
 
 	return result;
 }
 
 
-static id imp_NSData_initWithBytes_length_(id self, SEL sel,
-		char* data, unsigned len)
+static void
+imp_NSData_initWithBytes_length_(
+	void* cif __attribute__((__unused__)), 
+	void* resp, 
+	void** args, 
+	void* callable)
 {
+	id self = *(id*)args[0];
+	//SEL _meth = *(SEL*)args[1];
+	char* data = *(char**)args[2];
+	unsigned len = *(unsigned*)args[3];
+	id* pretval = (id*)resp;
+
 	PyObject* result;
-	PyObject* arglist;
-	id        objc_result;
+	PyObject* v;
+	PyObject* arglist = NULL;
 
-	arglist = PyTuple_New(2);
-	if (arglist == NULL) {
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	PyGILState_STATE state = PyGILState_Ensure();
 
-	PyTuple_SetItem(arglist, 0, PyString_FromStringAndSize(data, len));
-	PyTuple_SetItem(arglist, 1, PyInt_FromLong(len));
+	arglist = PyTuple_New(3);
+	if (arglist == NULL) goto error;
 
-	if (PyErr_Occurred()) {
-		Py_DECREF(arglist);
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	v = PyObjC_IdToPython(self);
+	if (v == NULL) goto error;
+	PyTuple_SetItem(arglist, 0, v); 
 
-	result = PyObjC_CallPython(self, sel, arglist);
-	Py_DECREF(arglist);
-	if (result == NULL) {
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	v = PyString_FromStringAndSize(data, len);
+	if (v == NULL) goto error;
+	PyTuple_SetItem(arglist, 1, v); 
 
-	objc_result = ObjC_PythonToId(result);
+	v = PyInt_FromLong(len);
+	if (v == NULL) goto error;
+	PyTuple_SetItem(arglist, 2, v); 
+
+	result = PyObject_Call((PyObject*)callable, arglist, NULL);
+	Py_DECREF(arglist); arglist = NULL;
+	if (result == NULL) goto error;
+
+	*pretval = PyObjC_PythonToId(result);
 	Py_DECREF(result);
 
-	if (PyErr_Occurred()) {
-		ObjCErr_ToObjC();
-		return nil;
+	if (*pretval == nil && PyErr_Occurred()) goto error;
+
+	PyGILState_Release(state);
+	return;
+
+error:
+	*pretval = nil;
+	Py_XDECREF(arglist);
+	PyObjCErr_ToObjCWithGILState(&state);
+}
+
+
+static PyObject* call_NSData_bytes(
+	PyObject* method, PyObject* self, PyObject* arguments)
+{
+	const void* bytes;
+	unsigned    bytes_len;
+	PyObject* result;
+	struct objc_super super;
+
+	if (!PyArg_ParseTuple(arguments, "")) {
+		return NULL;
 	}
 
-	return objc_result;
+	PyObjC_DURING
+		PyObjC_InitSuper(&super,
+			PyObjCSelector_GetClass(method),
+			PyObjCObject_GetObject(self));
+
+		bytes = objc_msgSendSuper(&super, 
+				PyObjCSelector_GetSelector(method));
+		bytes_len = (unsigned) objc_msgSendSuper(&super, @selector(length));
+
+
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+		result = NULL;
+		bytes = NULL;
+		bytes_len = 0;
+	PyObjC_ENDHANDLER
+
+	if (bytes == NULL && PyErr_Occurred()) return NULL;
+
+	result = PyBuffer_FromMemory((void*)bytes, bytes_len);
+
+	return result;
 }
 
-static PyObject* call_NSData_bytes(PyObject* method, PyObject* self, PyObject* arguments)
+static void 
+imp_NSData_bytes(
+	void* cif __attribute__((__unused__)), 
+	void* resp, 
+	void** args, 
+	void* callable)
 {
-  NSData *dataObject;
-  const void* bytes;
-  unsigned    bytes_len;
-  PyObject* result;
+	id self = *(id*)args[0];
+	//SEL _meth = *(SEL*)args[1];
+	void** pretval = (void**)resp;
 
-  if (PyArg_ParseTuple(arguments, "") < 0) {
-    return NULL;
-  }
+	PyObject* result;
+	PyObject* arglist = NULL;
+	PyObject* v;
 
-  NS_DURING
-    dataObject = PyObjCObject_GetObject(self);
+	PyGILState_STATE state = PyGILState_Ensure();
 
-    bytes = [dataObject bytes];
-    bytes_len = [dataObject length];
+	arglist = PyTuple_New(1);
+	if (arglist == NULL) goto error;
 
-    result = PyBuffer_FromMemory((void *)bytes, bytes_len);
-  NS_HANDLER
-    ObjCErr_FromObjC(localException);
-    result = NULL;
-  NS_ENDHANDLER
+	v = PyObjC_IdToPython(self);
+	if (v == NULL) goto error;
+	PyTuple_SET_ITEM(arglist, 0, v);
 
-  return result;
+	result = PyObject_Call((PyObject*)callable, arglist, NULL);
+	Py_DECREF(arglist); arglist = NULL;
+	if (result == NULL) goto error;
+
+	if (result == Py_None) {
+		*pretval = NULL;
+		Py_DECREF(result);
+		PyGILState_Release(state);
+		return;
+	}
+
+	if (PyBuffer_Check(result)) {
+		/* XXX: Is this correct?? */
+		const void *p;
+		int len;
+		if (PyObject_AsReadBuffer(result, &p, &len) == -1) {
+			goto error;
+		}
+		Py_DECREF(result);
+		*pretval =  (void *)p;
+		PyGILState_Release(state);
+		return;
+	} else if (PyString_Check(result)) {
+		/* XXX: Is this correct */
+		void* p;
+
+		p = PyString_AsString(result);
+		*pretval = (void*)p;
+		PyGILState_Release(state);
+		return;
+	}
+
+	PyErr_SetString(PyExc_ValueError, "No idea what to do with result.");
+	goto error;
+
+error:
+	Py_XDECREF(arglist);
+	PyObjCErr_ToObjCWithGILState(&state);
+	*pretval = NULL;
 }
 
-static PyObject* supercall_NSData_bytes(PyObject* method, PyObject* self, PyObject* arguments)
+
+static PyObject* 
+call_NSMutableData_mutableBytes(
+	PyObject* method, PyObject* self, PyObject* arguments)
 {
-  const void* bytes;
-  unsigned    bytes_len;
-  PyObject* result;
-  struct objc_super super;
+	void*     bytes;
+	unsigned  bytes_len;
+	PyObject* result;
+	struct objc_super super;
 
-  if (PyArg_ParseTuple(arguments, "") < 0) {
-    return NULL;
-  }
+	if (!PyArg_ParseTuple(arguments, "")) {
+		return NULL;
+	}
 
-  NS_DURING
-    PyObjC_InitSuper(&super,
-	    PyObjCClass_GetClass((PyObject*)(self->ob_type)),
-	    PyObjCObject_GetObject(self));
+	PyObjC_DURING
+		PyObjC_InitSuper(&super,
+			PyObjCSelector_GetClass(method),
+			PyObjCObject_GetObject(self));
 
-    /* bbum: Not at all sure what to do here....   send both to super?  
-     *       Just -bytes?
-     * ronald: I think both is more correct, neiter one is perfect.
-     */
-    bytes = objc_msgSendSuper(&super, @selector(bytes));
-    bytes_len = (unsigned) objc_msgSendSuper(&super, @selector(length));
+		bytes = objc_msgSendSuper(&super, 
+				PyObjCSelector_GetSelector(method));
+		bytes_len = (unsigned) objc_msgSendSuper(&super, @selector(length));
 
-    result = PyBuffer_FromMemory((void*)bytes, bytes_len);
-  NS_HANDLER
-    ObjCErr_FromObjC(localException);
-    result = NULL;
-  NS_ENDHANDLER
+	PyObjC_HANDLER
+		PyObjCErr_FromObjC(localException);
+		result = NULL;
+		bytes = NULL;
+		bytes_len = 0;
+	PyObjC_ENDHANDLER
 
-  return result;
+	if (bytes == NULL && PyErr_Occurred()) return NULL;
+
+	result = PyBuffer_FromReadWriteMemory((void*)bytes, bytes_len);
+
+	return result;
 }
 
-static void *imp_NSData_bytes(id self, SEL sel)
+static void
+imp_NSMutableData_mutableBytes(
+	void* cif __attribute__((__unused__)), 
+	void* resp, 
+	void** args, 
+	void* callable)
 {
-  PyObject* result;
+	id self = *(id*)args[0];
+	//SEL _meth = *(SEL*)args[1];
+	void** pretval = (void**)resp;
+	PyObject* result;
+	PyObject* arglist = NULL;
+	PyObject* v;
 
-  result = PyObjC_CallPython(self, sel, NULL);
-  if (result == NULL) {
-    ObjCErr_ToObjC();
-    return NULL;
-  }
+	PyGILState_STATE state = PyGILState_Ensure();
 
-  if (result == Py_None)
-    return NULL;
+	arglist = PyTuple_New(1);
+	if (arglist == NULL) goto error;
 
-  if (PyBuffer_Check(result)) {
-    const void *p;
-    int len;
-    if (PyObject_AsReadBuffer(result, &p, &len) == -1) {
-      ObjCErr_ToObjC();
-      return NULL;
-    }
-    return (void *)p;
-  }
+	v = PyObjC_IdToPython(self);
+	if (v == NULL) goto error;
+	PyTuple_SET_ITEM(arglist, 0, v);
 
-  PyErr_SetString(PyExc_ValueError, "No idea what to do with result.");
-  return NULL;
+	result = PyObject_Call((PyObject*)callable, arglist, NULL);
+	Py_DECREF(arglist); arglist = NULL;
+	if (result == NULL) goto error;
+
+	if (result == Py_None) {
+		Py_DECREF(result);
+		goto error;
+	}
+
+	if (result == Py_None) {
+		*pretval = NULL;
+		Py_DECREF(result);
+		PyGILState_Release(state);
+		return;
+	}
+
+	if (PyBuffer_Check(result)) {
+		/* XXX: Is this correct? */
+		void *p;
+		int len;
+		if (PyObject_AsWriteBuffer(result, &p, &len) == -1) goto error;
+		Py_DECREF(result);
+		*pretval = (void *)p;
+		PyGILState_Release(state);
+		return;
+	}
+
+	PyErr_SetString(PyExc_ValueError, "No idea what to do with result.");
+	PyObjCErr_ToObjCWithGILState(&state);
+	*pretval = NULL;
+	return;
+
+error:
+	Py_XDECREF(arglist);
+	*pretval = NULL;
+	PyObjCErr_ToObjCWithGILState(&state);
 }
 
-static PyObject* call_NSMutableData_mutableBytes(PyObject* method, PyObject* self, PyObject* arguments)
+static int 
+_pyobjc_install_NSData(void)
 {
-  NSMutableData *dataObject;
-  void*     bytes;
-  unsigned  bytes_len;
-  PyObject* result;
-  
-  if (PyArg_ParseTuple(arguments, "") < 0) {
-    return NULL;
-  }
+	Class classNSData = objc_lookUpClass("NSData");
+	Class classNSMutableData = objc_lookUpClass("NSMutableData");
 
-  NS_DURING
-    dataObject = PyObjCObject_GetObject(self);
+	if (classNSData != NULL) {
 
-    bytes = [dataObject mutableBytes];
-    bytes_len = [dataObject length];
-
-    result = PyBuffer_FromReadWriteMemory((void *)bytes, bytes_len);
-  NS_HANDLER
-    ObjCErr_FromObjC(localException);
-    result = NULL;
-  NS_ENDHANDLER
-
-  return result;
-}
-
-static PyObject* supercall_NSMutableData_mutableBytes(PyObject* method, PyObject* self, PyObject* arguments)
-{
-  void*     bytes;
-  unsigned  bytes_len;
-  PyObject* result;
-  struct objc_super super;
-
-  if (PyArg_ParseTuple(arguments, "") < 0) {
-    return NULL;
-  }
-
-  NS_DURING
-    PyObjC_InitSuper(&super,
-    	PyObjCClass_GetClass((PyObject*)(self->ob_type)),
-    	PyObjCObject_GetObject(self));
-
-    /* bbum: Not at all sure what to do here....   
-     *       send both to super?  Just -bytes?
-     */
-    bytes = objc_msgSendSuper(&super, @selector(mutableBytes));
-    bytes_len = (unsigned) objc_msgSendSuper(&super, @selector(length));
-
-    result = PyBuffer_FromReadWriteMemory((void*)bytes, bytes_len);
-  NS_HANDLER
-    ObjCErr_FromObjC(localException);
-    result = NULL;
-  NS_ENDHANDLER
-
-  return result;
-}
-
-static void *imp_NSMutableData_mutableBytes(id self, SEL sel)
-{
-  PyObject* result;
-
-  result = PyObjC_CallPython(self, sel, NULL);
-  if (result == NULL) {
-    ObjCErr_ToObjC();
-    return NULL;
-  }
-
-  if (result == Py_None)
-    return NULL;
-
-  if (PyBuffer_Check(result)) {
-    void *p;
-    int len;
-    if (PyObject_AsWriteBuffer(result, &p, &len) == -1) {
-      ObjCErr_ToObjC();
-      return NULL;
-    }
-    return (void *)p;
-  }
-
-  PyErr_SetString(PyExc_ValueError, "No idea what to do with result.");
-  return NULL;
-}
-
-int __pyobjc_install_NSData(void)
-{
-  if (ObjC_RegisterMethodMapping(objc_lookUpClass("NSData"), 
+		if (PyObjC_RegisterMethodMapping(classNSData, 
 				 @selector(initWithBytes:length:),
 				 call_NSData_initWithBytes_length_,
-				 supercall_NSData_initWithBytes_length_,
-				 (IMP)imp_NSData_initWithBytes_length_) < 0 ) {
-    NSLog(@"Error occurred while installing NSData method bridge (initWithBytes:length:).");
-    PyErr_Print();
-    return -1;
-  }
+				 imp_NSData_initWithBytes_length_) < 0 ) {
+			return -1;
+		}
 
-  if (ObjC_RegisterMethodMapping(objc_lookUpClass("NSData"), 
+		if (PyObjC_RegisterMethodMapping(classNSData, 
 				 @selector(dataWithBytes:length:),
 				 call_NSData_dataWithBytes_length_,
-				 supercall_NSData_dataWithBytes_length_,
-				 (IMP)imp_NSData_dataWithBytes_length_) < 0 ) {
-    NSLog(@"Error occurred while installing NSData method bridge (initWithBytes:length:).");
-    PyErr_Print();
-    return -1;
-  }
+				 imp_NSData_dataWithBytes_length_) < 0 ) {
+			return -1;
+		}
   
-  if (ObjC_RegisterMethodMapping(objc_lookUpClass("NSData"), 
+		if (PyObjC_RegisterMethodMapping(classNSData, 
 				 @selector(bytes),
 				 call_NSData_bytes,
-				 supercall_NSData_bytes,
-				 (IMP)imp_NSData_bytes) < 0 ) {
-    NSLog(@"Error occurred while installing NSData method bridge (bytes).");
-    PyErr_Print();
-    return -1;
-  }
+				 imp_NSData_bytes) < 0 ) {
+			return -1;
+		}
 
-  if (ObjC_RegisterMethodMapping(objc_lookUpClass("NSMutableData"), 
-				 @selector(mutableBytes),
-				 call_NSMutableData_mutableBytes,
-				 supercall_NSMutableData_mutableBytes,
-				 (IMP)imp_NSMutableData_mutableBytes) < 0 ) {
-    NSLog(@"Error occurred while installing NSMutableData method bridge (mutableBytes).");
-    PyErr_Print();
-    return -1;
-  }
+		if (PyObjC_RegisterMethodMapping(
+				classNSData,
+				@selector(initWithBytes:length:copy:freeWhenDone:bytesAreVM:),
+				PyObjCUnsupportedMethod_Caller,
+				PyObjCUnsupportedMethod_IMP) < 0) {
+			return -1;	
+		}
+	}
+
+	if (classNSMutableData != NULL) {
+
+		if (PyObjC_RegisterMethodMapping(classNSMutableData, 
+				@selector(mutableBytes),
+				call_NSMutableData_mutableBytes,
+				imp_NSMutableData_mutableBytes) < 0 ) {
+			return -1;
+		}
+	}
+
   
-  return 0;
+	return 0;
 }
-

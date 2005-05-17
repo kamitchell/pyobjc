@@ -1,5 +1,3 @@
-from __future__ import generators
-
 """
 This module implements a callback function that is used by the C code to
 add Python special methods to Objective-C classes with a suitable interface.
@@ -8,40 +6,86 @@ This module contains no user callable code.
 
 TODO:
 - Add external interface: Framework specific modules may want to add to this.
+
+- These are candidates for implementation:
+
+    >>> from Foundation import *
+    >>> set(dir(list)) - set(dir(NSMutableArray))
+    set(['__delslice__', '__imul__', '__getslice__', '__setslice__',
+        '__iadd__', '__mul__', '__add__', '__rmul__'])
+    >>> set(dir(dict)) - set(dir(NSMutableDictionary))
+    set(['__cmp__'])
+
 """
-from objc import set_class_extender, selector, runtime
+from _objc import setClassExtender, selector, lookUpClass, currentBundle, repythonify, splitSignature
+from itertools import imap
+
+__all__ = ['CONVENIENCE_METHODS', 'CLASS_METHODS']
 
 CONVENIENCE_METHODS = {}
 CLASS_METHODS = {}
 
+NSObject = lookUpClass('NSObject')
+
+HAS_KVO = NSObject.instancesRespondToSelector_('willChangeValueForKey:')
+
+def isNative(sel):
+    return not hasattr(sel, 'callable')
+
 def add_convenience_methods(super_class, name, type_dict):
+    try:
+        return _add_convenience_methods(super_class, name, type_dict)
+    except:
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+def _add_convenience_methods(super_class, name, type_dict):
     """
-    Add additional methods to the type-dict of subclass 'name' of 
-    'super_class'. 
-    
+    Add additional methods to the type-dict of subclass 'name' of
+    'super_class'.
+
     CONVENIENCE_METHODS is a global variable containing a mapping from
     an Objective-C selector to a Python method name and implementation.
-    
-    CLASS_METHODS is a global variable containing a mapping from 
+
+    CLASS_METHODS is a global variable containing a mapping from
     class name to a list of Python method names and implementation.
 
     Matching entries from both mappings are added to the 'type_dict'.
     """
-    for sel in type_dict.values():
+    if type_dict.get('__objc_python_subclass__'):
+        if 'bundleForClass' not in type_dict:
+            cb = currentBundle()
+            def bundleForClass(cls):
+                return cb
+            type_dict['bundleForClass'] = selector(bundleForClass, isClassMethod=True)
+            if (HAS_KVO and 
+                    '__useKVO__' not in type_dict and
+                    isNative(type_dict.get('willChangeValueForKey_')) and
+                    isNative(type_dict.get('didChangeValueForKey_'))):
+                useKVO = issubclass(super_class, NSObject)
+                type_dict['__useKVO__'] = useKVO
+        if '__bundle_hack__' in type_dict:
+            import warnings
+            warnings.warn(
+                "__bundle_hack__ is not necessary in PyObjC 1.3+ / py2app 0.1.8+",
+                DeprecationWarning)
+
+    for k, sel in type_dict.items():
         if not isinstance(sel, selector):
             continue
 
-        
-        if sel.selector.startswith('init') and not sel.isClassMethod:
-            # Instance methods that start with 'init*' are constructors. These
-            # return 'self'. If they don't they reallocated the previous 
-            # value, don't use that afterwards.
-            sel.returnsSelf = 1
-            sel.isInitializer = 1
-        elif sel.selector == "alloc" or sel.selector == "allocWithZone:":
+        if sel.selector == "alloc" or sel.selector == "allocWithZone:":
             sel.isAlloc = 1
 
-        if sel.selector in ( 'copy', 'copyWithZone:', 
+        if sel.selector.endswith(':error:'):
+            sigParts = splitSignature(sel.signature)
+            if sigParts[-1] == '^@':
+                sigParts = sigParts[:-1] + ('o^@',)
+                sel.signature = ''.join(sigParts)
+
+        if sel.selector in ( 'copy', 'copyWithZone:',
                       'mutableCopy', 'mutableCopyWithZone:'):
             # These methods transfer ownership to the caller, the runtime uses
             # this information to adjust the reference count.
@@ -49,84 +93,103 @@ def add_convenience_methods(super_class, name, type_dict):
 
         sel = sel.selector
 
-        if CONVENIENCE_METHODS.has_key(sel):
+        if sel in CONVENIENCE_METHODS:
             v = CONVENIENCE_METHODS[sel]
-            for name, value in v:
-                if name in type_dict and isinstance(type_dict[name], selector):
+            for nm, value in v:
+                if nm in type_dict and isinstance(type_dict[nm], selector):
 
                     # Clone attributes of already existing version
 
-                    t = type_dict[name]
-                    v = selector(value, selector=t.selector, 
+                    t = type_dict[nm]
+                    v = selector(value, selector=t.selector,
                         signature=t.signature, isClassMethod=t.isClassMethod)
-                    v.isInitializer = t.isInitializer
-                    v.returnsSelf = t.returnsSelf
                     v.isAlloc = t.isAlloc
 
-                    #if t.selector.startswith('init'):
-                    #    v.isInitializer = 1
-                    #    v.returnsSelf = 1
-                    #elif sel.selector == "alloc" \
-                    #        or sel.selector == "allocWithZone:":
-                    #    sel.isAlloc = 1
-
-                    type_dict[name] = v
+                    type_dict[nm] = v
                 else:
-                    type_dict[name] = value
+                    type_dict[nm] = value
 
-    if CLASS_METHODS.has_key(name):
-        for name, value in CLASS_METHODS[name]:
-            type_dict[name] = value
+    if name in CLASS_METHODS:
+        for nm, value in CLASS_METHODS[name]:
+            type_dict[nm] = value
 
-set_class_extender(add_convenience_methods)
+setClassExtender(add_convenience_methods)
 
-# NOTE: the '!= 0' in the definition of the comparison function
-# is there to force conversion to type 'bool' on Python releases
-# that have such a type.
+def __getitem__objectForKey_(self, key):
+    res = self.objectForKey_(container_wrap(key))
+    return container_unwrap(res, KeyError, key)
 
-def __getitem__objectForKey(self, key):
-    res = self.objectForKey_(key)
+def has_key_objectForKey_(self, key):
+    res = self.objectForKey_(container_wrap(key))
+    return res is not None
+
+def get_objectForKey_(self, key, dflt=None):
+    res = self.objectForKey_(container_wrap(key))
     if res is None:
-        raise KeyError, key
-    return res
-def has_key_objectForKey(self, key):
-    res = self.objectForKey_(key)
-    return not (res is None)
-def get_objectForKey(self, key, dflt=None):
-    res = self.objectForKey_(key)
-    if res is None: 
         res = dflt
     return res
 
 CONVENIENCE_METHODS['objectForKey:'] = (
-    ('__getitem__', __getitem__objectForKey),
-    ('has_key', has_key_objectForKey),
-    ('get', get_objectForKey),
-    ('__contains__', lambda self, elem: (self.objectForKey_(elem) != None)),
+    ('__getitem__', __getitem__objectForKey_),
+    ('has_key', has_key_objectForKey_),
+    ('get', get_objectForKey_),
+    ('__contains__', has_key_objectForKey_),
 )
+
+def __delitem__removeObjectForKey_(self, key):
+    self.removeObjectForKey_(container_wrap(key))
 
 CONVENIENCE_METHODS['removeObjectForKey:'] = (
-    ('__delitem__', lambda self, key: self.removeObjectForKey_(key)), 
+    ('__delitem__', __delitem__removeObjectForKey_),
 )
 
+def update_setObject_forKey_(self, other):
+    # XXX - should this be more flexible?
+    for key, value in other.items():
+        self[key] = value
+
+def setdefault_setObject_forKey_(self, key, dflt=None):
+    try:
+        return self[key]
+    except KeyError:
+        self[key] = dflt
+        return dflt
+
+def __setitem__setObject_forKey_(self, key, value):
+    self.setObject_forKey_(container_wrap(value), container_wrap(key))
+    
+def pop_setObject_forKey_(self, key, dflt=None):
+    try:
+        res = self[key]
+    except KeyError:
+        res = dflt
+    else:
+        del self[key]
+    return res
+
+def popitem_setObject_forKey_(self):
+    try:
+        k = self[iter(self).next()]
+    except StopIteration:
+        raise KeyError, "popitem on an empty %s" % (type(self).__name__,)
+    else:
+        return (k, self[k])
+
 CONVENIENCE_METHODS['setObject:forKey:'] = (
-    ('__setitem__', lambda self, key, value: self.setObject_forKey_(value, key)), 
+    ('__setitem__', __setitem__setObject_forKey_),
+    ('update', update_setObject_forKey_),
+    ('setdefault', setdefault_setObject_forKey_),
+    ('pop', pop_setObject_forKey_),
+    ('popitem', popitem_setObject_forKey_),
 )
+
 
 CONVENIENCE_METHODS['count'] = (
     ('__len__', lambda self: self.count()),
 )
 
-CONVENIENCE_METHODS['description'] = (
-    # Don't do '__repr__', if the object is not yet initialized this may
-    # cause coredumps (and __repr__ is used by the interpreter to print
-    # objects in interactive mode)
-    #('__repr__', lambda self: self.description()),
-    ('__str__', lambda self: self.description()),
-)
-
 CONVENIENCE_METHODS['containsObject:'] = (
-    ('__contains__', lambda self, elem: (self.containsObject_(elem) != 0)),
+    ('__contains__', lambda self, elem: bool(self.containsObject_(container_wrap(elem)))),
 )
 
 CONVENIENCE_METHODS['hash'] = (
@@ -134,125 +197,219 @@ CONVENIENCE_METHODS['hash'] = (
 )
 
 CONVENIENCE_METHODS['isEqualTo:'] = (
-    ('__eq__', lambda self, other: self.isEqualTo_(other)),
+    ('__eq__', lambda self, other: bool(self.isEqualTo_(other))),
 )
 
 CONVENIENCE_METHODS['isEqual:'] = (
-    ('__eq__', lambda self, other: self.isEqual_(other)),
+    ('__eq__', lambda self, other: bool(self.isEqual_(other))),
 )
 
 CONVENIENCE_METHODS['isGreaterThan:'] = (
-    ('__gt__', lambda self, other: self.isGreaterThan_(other)),
+    ('__gt__', lambda self, other: bool(self.isGreaterThan_(other))),
 )
 
 CONVENIENCE_METHODS['isGreaterThanOrEqualTo:'] = (
-    ('__ge__', lambda self, other: self.isGreaterThanOrEqualTo_(other)),
+    ('__ge__', lambda self, other: bool(self.isGreaterThanOrEqualTo_(other))),
 )
 
 CONVENIENCE_METHODS['isLessThan:'] = (
-    ('__lt__', lambda self, other: self.isLessThan_(other)),
+    ('__lt__', lambda self, other: bool(self.isLessThan_(other))),
 )
 
 CONVENIENCE_METHODS['isLessThanOrEqualTo:'] = (
-    ('__le__', lambda self, other: self.isLessThanOrEqualTo_(other)),
+    ('__le__', lambda self, other: bool(self.isLessThanOrEqualTo_(other))),
 )
 
 CONVENIENCE_METHODS['isNotEqualTo:'] = (
-    ('__ne__', lambda self, other: self.isNotEqualTo_(other)),
+    ('__ne__', lambda self, other: bool(self.isNotEqualTo_(other))),
 )
 
 CONVENIENCE_METHODS['length'] = (
     ('__len__', lambda self: self.length()),
 )
 
-def __getitem__objectAtIndexWithSlice(self, x, y):
-    l = len(self)
-    r = y - x
-    if r < 0:
-        return []
-    if (r - x) > l:
-        r = l - x
-    return self.subarrayWithRange_( (x, r) )
+CONVENIENCE_METHODS['addObject:'] = (
+    ('append', lambda self, item: self.addObject_(container_wrap(item))),
+)
 
-def __getitem__objectAtIndex(self, idx):
+def reverse_exchangeObjectAtIndex_withObjectAtIndex_(self):
+    begin = 0
+    end = len(self) - 1
+    while begin < end:
+        self.exchangeObjectAtIndex_withObjectAtIndex_(begin, end)
+        begin += 1
+        end -= 1
+
+CONVENIENCE_METHODS['exchangeObjectAtIndex:withObjectAtIndex:'] = (
+    ('reverse', reverse_exchangeObjectAtIndex_withObjectAtIndex_),
+)
+
+def ensureArray(anArray):
+    if not isinstance(anArray, (NSArray, list, tuple)):
+        anArray = list(anArray)
+    return anArray
+    
+
+def extend_addObjectsFromArray_(self, anArray):
+    self.addObjectsFromArray_(ensureArray(anArray))
+
+CONVENIENCE_METHODS['addObjectsFromArray:'] = (
+    ('extend', extend_addObjectsFromArray_),
+)
+
+def index_indexOfObject_(self, item):
+    from Foundation import NSNotFound
+    res = self.indexOfObject_(container_wrap(item))
+    if res == NSNotFound:
+        raise ValueError, "%s.index(x): x not in list" % (type(self).__name__,)
+    return res
+
+CONVENIENCE_METHODS['indexOfObject:'] = (
+    ('index', index_indexOfObject_),
+)
+
+def insert_insertObject_atIndex_(self, idx, item):
+    idx = slice(idx, None, None).indices(len(self)).start
+    self.insertObject_atIndex_(container_wrap(item), idx)
+
+CONVENIENCE_METHODS['insertObject:atIndex:'] = (
+    ( 'insert', insert_insertObject_atIndex_),
+)
+
+def __getitem__objectAtIndex_(self, idx):
+    length = len(self)
+    if isinstance(idx, slice):
+        start, stop, step = idx.indices(length)
+        #if step == 1:
+        #    m = getattr(self, 'subarrayWithRange_', None)
+        #    if m is not None:
+        #        return m((start, stop - start))
+        return [self[i] for i in xrange(start, stop, step)]
     if idx < 0:
-        idx = len(self) + idx
+        idx += length
         if idx < 0:
             raise IndexError, "index out of range"
-    elif idx >= len(self):
-            raise IndexError, "index out of range"
-    return self.objectAtIndex_(idx)
+    elif idx >= length:
+        raise IndexError, "index out of range"
+    return container_unwrap(self.objectAtIndex_(idx), RuntimeError)
 
 CONVENIENCE_METHODS['objectAtIndex:'] = (
-    ('__getitem__', __getitem__objectAtIndex),
-    ('__getslice__', __getitem__objectAtIndexWithSlice),
+    ('__getitem__', __getitem__objectAtIndex_),
 )
 
-def __delslice__removeObjectAtIndex(self, x, y):
-    l = len(self)
-    r = y - x
-    if r < 0:
+def __delitem__removeObjectAtIndex_(self, idx):
+    length = len(self)
+    if isinstance(idx, slice):
+        start, stop, step = idx.indices(length)
+        if step == 1:
+            if start > stop:
+                start, stop = stop, start
+            m = getattr(self, 'removeObjectsInRange_', None)
+            if m is not None:
+                m((start, stop - start))
+                return
+        r = range(start, stop, step)
+        r.sort()
+        r.reverse()
+        for i in r:
+            self.removeObjectAtIndex_(i)
         return
-    if (r - x) > l:
-        r = l - x
-    return self.removeObjectsInRange_( (x, r) )
+    if idx < 0:
+        idx += length
+        if idx < 0:
+            raise IndexError, "index out of range"
+    elif idx >= length:
+        raise IndexError, "index out of range"
+    self.removeObjectAtIndex_(idx)
     
+def pop_removeObjectAtIndex_(self, idx=-1):
+    length = len(self)
+    if length <= 0:
+        raise IndexError("pop from empty list")
+    elif idx >= length or (idx + length) < 0:
+        raise IndexError("pop index out of range")
+    elif idx < 0:
+        idx += length
+    rval = self[idx]
+    self.removeObjectAtIndex_(idx)
+    return rval
+
+def remove_removeObjectAtIndex_(self, obj):
+    idx = self.index(obj)
+    self.removeObjectAtIndex_(idx)
+
 CONVENIENCE_METHODS['removeObjectAtIndex:'] = (
-    ('__delitem__', lambda self, index: self.removeObjectAtIndex_(index)),
-    ('__delslice__', __delslice__removeObjectAtIndex),
+    ('remove', remove_removeObjectAtIndex_),
+    ('pop', pop_removeObjectAtIndex_),
+    ('__delitem__', __delitem__removeObjectAtIndex_),
 )
+
+def __setitem__replaceObjectAtIndex_withObject_(self, idx, anObject):
+    length = len(self)
+    if isinstance(idx, slice):
+        start, stop, step = idx.indices(length)
+        if step == 1:
+            m = getattr(self, 'replaceObjectsInRange_withObjectsFromArray_', None)
+            if m is not None:
+                m((start, stop - start), ensureArray(anObject))
+                return
+        # XXX - implement this..
+        raise NotImplementedError
+    if idx < 0:
+        idx += length
+        if idx < 0:
+            raise IndexError, "index out of range"
+    elif idx >= length:
+        raise IndexError, "index out of range"
+    self.replaceObjectAtIndex_withObject_(idx, anObject)
 
 CONVENIENCE_METHODS['replaceObjectAtIndex:withObject:'] = (
-    ('__setitem__', lambda self, index, anObject: self.replaceObjectAtIndex_withObject_(index, anObject)),
+    ('__setitem__', __setitem__replaceObjectAtIndex_withObject_),
 )
-
-def __setslice__replaceObjectAtIndex_withObject(self, x, y, v):
-    l = len(self)
-    r = y - x
-    if r < 0:
-        return
-    if (r - x) > l:
-        r = l - x
-    return self.replaceObjectsInRange_withObjectsFromArray_( (x, r), v )
-
-CONVENIENCE_METHODS['replaceObjectsInRange:withObjectsFromArray:'] = (
-    ('__setslice__', __setslice__replaceObjectAtIndex_withObject), 
-)
-
-# Mapping protocol
-
-# Mappings (e.g. like dict)
-# TODO (not all are needed or even possible): 
-#   iter*, update, pop, popitem, setdefault
-# __str__ would be nice (as obj.description()),
 
 def enumeratorGenerator(anEnumerator):
-    nextObject = anEnumerator.nextObject()
-    while nextObject is not None:
-        yield nextObject
-        nextObject = anEnumerator.nextObject()
+    while True:
+        yield container_unwrap(anEnumerator.nextObject(), StopIteration)
+
+def dictItems(aDict):
+    """
+    NSDictionary.items()
+    """
+    keys = aDict.allKeys()
+    return zip(keys, imap(aDict.__getitem__, keys))
 
 CONVENIENCE_METHODS['allKeys'] = (
     ('keys', lambda self: self.allKeys()),
+    ('items', lambda self: dictItems(self)),
 )
 
 CONVENIENCE_METHODS['allValues'] = (
     ('values', lambda self: self.allValues()),
 )
 
+def itemsGenerator(aDict):
+    for key in aDict:
+        yield (key, aDict[key])
+
+def __iter__objectEnumerator_keyEnumerator(self):
+    meth = getattr(self, 'keyEnumerator', None)
+    if meth is None:
+        meth = self.objectEnumerator
+    return iter(meth())
+
 CONVENIENCE_METHODS['keyEnumerator'] = (
-    ('__iter__', lambda self: enumeratorGenerator(self.keyEnumerator())),
-    ('iterkeys', lambda self: enumeratorGenerator( self.keyEnumerator())),
+    ('__iter__', __iter__objectEnumerator_keyEnumerator),
+    ('iterkeys', lambda self: iter(self.keyEnumerator())),
+    ('iteritems', lambda self: itemsGenerator(self)),
 )
 
 CONVENIENCE_METHODS['objectEnumerator'] = (
-    ('__iter__', lambda self: enumeratorGenerator(self.objectEnumerator())),
-    ('itervalues', lambda self: enumeratorGenerator( self.objectEnumerator())),
+    ('__iter__', __iter__objectEnumerator_keyEnumerator),
+    ('itervalues', lambda self: iter(self.objectEnumerator())),
 )
 
 CONVENIENCE_METHODS['reverseObjectEnumerator'] = (
-    ('__iter__', lambda self: enumeratorGenerator(self.reverseObjectEnumerator())),
-    ('itervalues', lambda self: enumeratorGenerator(self.reverseObjectEnumerator()))
+    ('__reversed__', lambda self: iter(self.reverseObjectEnumerator())),
 )
 
 CONVENIENCE_METHODS['removeAllObjects'] = (
@@ -264,160 +421,30 @@ CONVENIENCE_METHODS['dictionaryWithDictionary:'] = (
 )
 
 CONVENIENCE_METHODS['nextObject'] = (
-    ('__iter__', lambda self: enumeratorGenerator(self)),
-    ('itervalues', lambda self: enumeratorGenerator(self)),
+    ('__iter__', enumeratorGenerator),
 )
 
 #
 # NSNumber seems to be and abstract base-class that is implemented using
 # NSCFNumber, a CoreFoundation 'proxy'.
 #
-def _num_to_python(v):
-    """
-    Magic method that converts NSNumber values to Python, see 
-    <Foundation/CFNumber.h> for the magic numbers
-    """
-    if hasattr(v, '_cfNumberType'):
-        tp = v._cfNumberType()
-        if tp in [ 1, 2, 3, 7, 8, 9, 10 ]:
-            v = v.longValue()
-        elif tp in [ 4, 11 ]:
-            v = v.longlongValue()
-        elif tp in [ 5, 6, 12, 13 ]:
-            v = v.doubleValue()
-        else:
-            print "Unhandled numeric type: %s"%tp
+NSNull = lookUpClass('NSNull')
+NSArray = lookUpClass('NSArray')
+null = NSNull.null()
 
+number_wrap = repythonify
+
+def container_wrap(v):
+    if v is None:
+        return null
     return v
 
-def __abs__CFNumber(numA):
-    return abs(_num_to_python(numA))
-
-def __add__CFNumber(numA, numB):
-    return _num_to_python(numA) + _num_to_python(numB)
-
-def __and__CFNumber(numA, numB):
-    return _num_to_python(numA) & _num_to_python(numB)
-
-def __div__CFNumber(numA, numB):
-    return _num_to_python(numA) / _num_to_python(numB)
-
-def __divmod__CFNumber(numA, numB):
-    return divmod(_num_to_python(numA), _num_to_python(numB))
-
-def __float__CFNumber(numA):
-    return float(_num_to_python(numA))
-
-def __floordiv__CFNumber(numA, numB):
-    return _num_to_python(numA) // _num_to_python(numB)
-
-def __hex__CFNumber(numA):
-    return hex(_num_to_python(numA))
-
-def __int__CFNumber(numA):
-    return int(_num_to_python(numA))
-
-def __invert__CFNumber(numA):
-    return ~_num_to_python(numA)
-
-def __long__CFNumber(numA):
-    return long(_num_to_python(numA))
-
-def __lshift__CFNumber(numA, numB):
-    return _num_to_python(numA) << _num_to_python(numB)
-
-def __rshift__CFNumber(numA, numB):
-    return _num_to_python(numA) >> _num_to_python(numB)
-
-def __mod__CFNumber(numA, numB):
-    return _num_to_python(numA) % _num_to_python(numB)
-
-def __mul__CFNumber(numA, numB):
-    return _num_to_python(numA) * _num_to_python(numB)
-
-def __neg__CFNumber(numA):
-    return -_num_to_python(numA)
-
-def __oct__CFNumber(numA):
-    return oct(_num_to_python(numA))
-
-def __or__CFNumber(numA, numB):
-    return _num_to_python(numA)  | _num_to_python(numB)
-
-def __pos__CFNumber(numA):
-    return +_num_to_python(numA)
-
-def __pow__CFNumber(numA, numB, modulo=None):
-    if modulo is None:
-        return _num_to_python(numA)  ** _num_to_python(numB)
-    else:
-        return pow(_num_to_python(numA), _num_to_python(numB), modulo)
-
-def __sub__CFNumber(numA, numB):
-    return _num_to_python(numA)  - _num_to_python(numB)
-
-def __truediv__CFNumber(numA, numB):
-    return _num_to_python(numA) / _num_to_python(numB)
-
-def __xor__CFNumber(numA, numB):
-    return _num_to_python(numA)  ^ _num_to_python(numB)
-
-import __builtin__
-if not hasattr(__builtin__, 'bool'):
-    def bool(x):
-        if x:
-            return 1
-        else:
-            return 0
-
-def __nonzero__CFNumber(numA):
-    return bool(_num_to_python(numA))
-
-CONVENIENCE_METHODS['_cfNumberType'] = (
-    ('__abs__', __abs__CFNumber),
-    ('__add__', __add__CFNumber),
-    ('__and__', __and__CFNumber),
-    ('__div__', __div__CFNumber),
-    ('__divmod__', __divmod__CFNumber),
-    ('__float__', __float__CFNumber),
-    ('__floordiv__', __floordiv__CFNumber),
-    ('__hex__', __hex__CFNumber),
-    ('__int__', __int__CFNumber),
-    ('__invert__', __invert__CFNumber),
-    ('__long__', __long__CFNumber),
-    ('__lshift__', __lshift__CFNumber),
-    ('__mod__', __mod__CFNumber),
-    ('__mul__', __mul__CFNumber),
-    ('__neg__', __neg__CFNumber),
-    ('__oct__', __oct__CFNumber),
-    ('__or__', __or__CFNumber),
-    ('__pos__', __pos__CFNumber),
-    ('__pow__', __pow__CFNumber),
-    ('__radd__', lambda x, y: __add__CFNumber(y, x)),
-    ('__rand__', lambda x, y: __and__CFNumber(y, x)),
-    ('__rdiv__', lambda x, y: __div__CFNumber(y, x)),
-    ('__rdivmod__', lambda x, y: __divmod__CFNumber(y, x)),
-    ('__rfloordiv__', lambda x, y: _rfloordiv__CFNumber(y, x)),
-    ('__rlshift__', lambda x, y: __lshift__CFNumber(y, x)),
-    ('__rmod__', lambda x, y: __mod__CFNumber(y, x)),
-    ('__rmul__', lambda x, y: __mul__CFNumber(y, x)),
-    ('__ror__', lambda x, y: __or__CFNumber(y, x)),
-    ('__rpow__', lambda x, y, z=None: __pow__CFNumber(y, x, z)),
-    ('__rrshift__', lambda x, y: __rshift__CFNumber(y, x)),
-    ('__rshift__', lambda x, y: __shift__CFNumber(y, x)),
-    ('__rsub__', lambda x, y: __sub__CFNumber(y, x)),
-    ('__rtruediv__', lambda x, y: __truediv__CFNumber(y, x)),
-    ('__rxor__', lambda x, y: __xor__CFNumber(y, x)),
-    ('__sub__', __sub__CFNumber),
-    ('__truediv__', __truediv__CFNumber),
-    ('__xor__', __xor__CFNumber),
-    ('__nonzero__', __nonzero__CFNumber),
-)
-
-#CONVENIENCE_METHODS['boolValue'] = (
-#    ('__nonzero__', lambda (self): self.boolValue() != 0),
-#)
-
+def container_unwrap(v, exc_type, *exc_args):
+    if v is None:
+        raise exc_type(*exc_args)
+    elif v is null:
+        return None
+    return v
 
 #
 # Special wrappers for a number of varargs functions (constructors)
@@ -441,19 +468,6 @@ CONVENIENCE_METHODS['arrayWithObjects:'] = (
     ('arrayWithObjects_', selector(arrayWithObjects_, signature='@@:@', isClassMethod=1)),
 )
 
-def arrayWithObjects_count_(self, args, count):
-    return self.arrayWithArray_(args[:count])
-
-CONVENIENCE_METHODS['arrayWithObjects:count:'] = (
-    ('arrayWithObjects_count_', selector(arrayWithObjects_count_, signature='@@:^@i', isClassMethod=1)),
-)
-
-def initWithObjects_count_(self, args, count):
-    return self.initWithArray_(args[:count])
-
-CONVENIENCE_METHODS['initWithObjects:count:'] = (
-    ('initWithObjects_count_', initWithObjects_count_),
-)
 
 def setWithObjects_(self, *args):
     if args[-1] is not None:
@@ -480,18 +494,31 @@ def splitObjectsAndKeys(values):
     objects = []
     keys = []
     for i in range(0, len(values)-1, 2):
-        objects.append(values[i])
-        keys.append(values[i+1])
+        objects.append(container_wrap(values[i]))
+        keys.append(container_wrap(values[i+1]))
     return objects, keys
 
 def dictionaryWithObjectsAndKeys_(self, *values):
     objects, keys = splitObjectsAndKeys(values)
-
     return self.dictionaryWithObjects_forKeys_(objects, keys)
 
 CONVENIENCE_METHODS['dictionaryWithObjectsAndKeys:'] = (
-    ('dictionaryWithObjectsAndKeys_', 
+    ('dictionaryWithObjectsAndKeys_',
       selector(dictionaryWithObjectsAndKeys_, signature='@@:@',isClassMethod=1)),
+)
+
+def fromkeys_dictionaryWithObjects_forKeys_(cls, keys, values=None):
+    if not isinstance(keys, (list, tuple)):
+        keys = list(keys)
+    if values is None:
+        values = (None,) * len(keys)
+    elif not isinstance(values, (list, tuple)):
+        values = list(values)
+    return cls.dictionaryWithObjects_forKeys_(values, keys)
+
+CONVENIENCE_METHODS['dictionaryWithObjects:forKeys:'] = (
+    ('fromkeys',
+        classmethod(fromkeys_dictionaryWithObjects_forKeys_)),
 )
 
 def initWithObjectsAndKeys_(self, *values):
@@ -502,22 +529,74 @@ CONVENIENCE_METHODS['initWithObjectsAndKeys:'] = (
     ( 'initWithObjectsAndKeys_', initWithObjectsAndKeys_ ),
 )
 
-# 'dictionaryWithObjects:forKeys:count' is not really a varargs function, but
-# would require a custom wrapper.
+def sort(self, cmpfunc=cmp):
+    def doCmp(a, b, cmpfunc):
+        return cmpfunc(a, b)
 
-def dictionaryWithObjects_forKeys_count_(self, objects, keys, count):
-    return self.dictionaryWithObjects_forKeys_(objects[:count], keys[:count])
+    self.sortUsingFunction_context_(doCmp, cmpfunc)
 
-CONVENIENCE_METHODS['dictionaryWithObjects:forKeys:count:'] = (
-    ('dictionaryWithObjects_forKeys_count_', 
-      selector(dictionaryWithObjects_forKeys_count_, signature='@@:^@^@i', isClassMethod=1)),
+CONVENIENCE_METHODS['sortUsingFunction:context:'] = (
+    ('sort', sort),
 )
 
-def initWithObjects_forKeys_count_(self, objects, keys, count):
-    return self.initWithObjects_forKeys_(objects[:count], keys[:count])
-
-CONVENIENCE_METHODS['initWithObjects:forKeys:count:'] = (
-    ( 'initWithObjects_forKeys_count_', 
-        selector(initWithObjects_forKeys_count_, signature='@@:^@^@i') ),
+CONVENIENCE_METHODS['hasPrefix:'] = (
+    ('startswith', lambda self, pfx: self.hasPrefix_(pfx)),
 )
 
+CONVENIENCE_METHODS['hasSuffix:'] = (
+    ('endswith', lambda self, pfx: self.hasSuffix_(pfx)),
+)
+
+CLASS_METHODS['NSNull'] = (
+    ('__nonzero__',  lambda self: False ),
+)
+
+NSDecimalNumber = lookUpClass('NSDecimalNumber')
+def _makeD(v):
+    if isinstance(v, NSDecimalNumber):
+        return v
+    return NSDecimalNumber.decimalNumberWithDecimal_(v)
+
+CLASS_METHODS['NSDecimalNumber'] = (
+    ('__add__', lambda self, other: _makeD(self.decimalValue() + other)),
+    ('__radd__', lambda self, other: _makeD(other + self.decimalValue())),
+    ('__sub__', lambda self, other: _makeD(self.decimalValue() - other)),
+    ('__rsub__', lambda self, other: _makeD(other - self.decimalValue())),
+    ('__mul__', lambda self, other: _makeD(self.decimalValue() * other)),
+    ('__rmul__', lambda self, other: _makeD(other * self.decimalValue())),
+    ('__div__', lambda self, other: _makeD(self.decimalValue() / other)),
+    ('__rdiv__', lambda self, other: _makeD(other / self.decimalValue())),
+    ('__mod__', lambda self, other: _makeD(self.decimalValue() % other)),
+    ('__rmod__', lambda self, other: _makeD(other % self.decimalValue())),
+    ('__neg__', lambda self: _makeD(-(self.decimalValue()))),
+    ('__pos__', lambda self: _makeD(+(self.decimalValue()))),
+    ('__abs__', lambda self: _makeD(abs(self.decimalValue()))),
+)
+
+def NSData__getslice__(self, i, j):
+    return self.bytes()[i:j]
+
+def NSData__getitem__(self, item):
+    buff = self.bytes()
+    try:
+        return buff[item]
+    except TypeError:
+        return buff[:][item]
+
+CLASS_METHODS['NSData'] = (
+    ('__str__', lambda self: self.bytes()[:]),
+    ('__getitem__', NSData__getitem__),
+    ('__getslice__', NSData__getslice__),
+)
+
+def NSMutableData__setslice__(self, i, j, sequence):
+    # XXX - could use replaceBytes:inRange:, etc.
+    self.mutableBytes()[i:j] = sequence
+    
+def NSMutableData__setitem__(self, item, value):
+    self.mutableBytes()[item] = value
+
+CLASS_METHODS['NSMutableData'] = (
+    ('__setslice__', NSMutableData__setslice__),
+    ('__setitem__', NSMutableData__setitem__),
+)

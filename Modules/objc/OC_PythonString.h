@@ -1,29 +1,69 @@
-#ifndef OC_PythonString_h
-#define OC_PythonString_h
-
-#import <CoreFoundation/CoreFoundation.h>
-#import <Foundation/NSString.h>
-#include "Python.h"
-
-/*
- * OC_PythonString - Objective-C proxy class for Python strings
- *
- * Instances of this class are used as proxies for Python strings 
- * when these are passed to Objective-C code. Because this class is
- * a subclass of NSString Python sequences can be used everywhere
- * where NSString is used.  Python strings are immutable.
+/*!
+ * @header OC_PythonString.h
+ * @abstract Objective-C proxy class for Python str
+ * @discussion
+ *     This file defines the class that is used to represent Python str
+ *     in Objective-C.
  */
 
-@interface OC_PythonString:NSString
+#include "pyobjc.h"
+
+/*!
+ * @class       OC_PythonString
+ * @abstract    Objective-C proxy class for Python str
+ * @discussion  Instances of this class are used as proxies for Python 
+ *              str when these are passed to Objective-C code.
+ */
+@interface OC_PythonString : NSString
 {
-    PyObject* value;
-    PyObject* _internalRep;
-    CFStringRef stringValue;
+	PyObject* value;
+	id realObject;
 }
 
-+newWithPythonObject:(PyObject*)value;
--initWithPythonObject:(PyObject*)value;
+/*!
+ * @method newWithPythonObject:
+ * @abstract Create a new OC_PythonString for a specific Python str
+ * @param value A python str
+ * @result Returns an autoreleased instance representing value
+ *
+ * Caller must own the GIL.
+ */
++ newWithPythonObject:(PyObject*)value;
+
+/*!
+ * @method initWithPythonObject:
+ * @abstract Initialise a OC_PythonString for a specific Python str
+ * @param value A python str
+ * @result Returns self
+ *
+ * Caller must own the GIL.
+ */
+- initWithPythonObject:(PyObject*)value;
+
+/*!
+ * @method dealloc
+ * @abstract Deallocate the object
+ */
 -(void)dealloc;
+
+/*!
+ * @abstract Access the wrapped Python str
+ * @result Returns a new reference to the wrapped Python str.
+ */
 -(PyObject*)__pyobjc_PythonObject__;
+
+/*!
+ * @abstract Access the NSString* representing the str
+ * @result Returns a backing NSString* object
+ */
+-(id)__realObject__;
+
+/*
+ * Primitive NSString methods
+ *
+ */
+-(unsigned)length;
+-(unichar)characterAtIndex:(unsigned)index;
+-(void)getCharacters:(unichar *)buffer range:(NSRange)aRange;
+
 @end
-#endif

@@ -1,8 +1,5 @@
 /*
  * Mapping of static items in the AddressBook framework
- * 
- * - constants 
- * - enumerations
  */
 #include <Python.h>
 
@@ -17,17 +14,19 @@ static PyMethodDef addressbook_methods[] = {
 
 
 PyDoc_STRVAR(addressbook_doc,
-"Cocoa._AddressBook defines constants, types and global functions used by "
-"Cocoa.AddressBook."
+  "_AddressBook defines constants, types and global functions used by "
+  "AddressBook."
 );
 
 
 #include "_Addr_Enum.inc"
 #include "_Addr_Str.inc"
 
+void init_AddressBook(void);
 void init_AddressBook(void)
 {
 	PyObject *m, *d;
+	CFBundleRef bundle;
 
 	m = Py_InitModule4("_AddressBook", addressbook_methods, 
 		addressbook_doc, NULL, PYTHON_API_VERSION);
@@ -36,10 +35,20 @@ void init_AddressBook(void)
 	d = PyModule_GetDict(m);
 	if (!d) return;
 
-	if (ObjC_ImportModule(m) < 0) {
+	if (PyObjC_ImportAPI(m) < 0) {
 		return;
 	}
 
+#ifdef MACOSX 
+	bundle = CFBundleGetBundleWithIdentifier(CFSTR("com.apple.AddressBook.framework"));
+#else
+	bundle = nil;
+#endif
+
+
 	if (register_ints(d, enum_table) < 0) return;
-	if (register_strings(d, string_table) < 0) return;
+	if (register_variableList(d, bundle, string_table, 
+		(sizeof(string_table)/sizeof(string_table[0])-1)) < 0) return;
+
+	//CFRelease(bundle);
 }

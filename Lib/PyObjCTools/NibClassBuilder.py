@@ -25,7 +25,7 @@ Using the class definitions.
 
 The module contains a "magic" base (super) class called AutoBaseClass.
 Subclassing AutoBaseClass will invoke some magic that will look up the
-proper base class in the class definitions extraced from the nib(s).
+proper base class in the class definitions extracted from the nib(s).
 If you use multiple inheritance to use Cocoa's "informal protocols",
 you _must_ list AutoBaseClass as the first base class. For example:
 
@@ -44,8 +44,8 @@ The command line tool.
 
 When run from the command line, this module invokes a simple command
 line program, which you feed paths to nibs. This will print a Python
-template for all classes defined in the nib(s). For more doco, see
-the commandline_doc variable, or simply run the program wothout
+template for all classes defined in the nib(s). For more documentation, see
+the commandline_doc variable, or simply run the program without
 arguments. It also contains a simple test program.
 """
 
@@ -74,7 +74,7 @@ class NibLoaderError(Exception): pass
 
 class ClassInfo:
 
-    __slots__ = ("nibs", "name", "super", "actions", "outlets")
+    attrNames = ("nibs", "name", "super", "actions", "outlets")
 
     def __repr__(self):
         items = self.__dict__.items()
@@ -92,8 +92,8 @@ class ClassInfo:
         self.actions = mergeLists(self.actions, other.actions)
 
     def __cmp__(self, other):
-        s = [getattr(self, x) for x in self.__slots__]
-        o = [getattr(other, x) for x in self.__slots__]
+        s = [getattr(self, x) for x in self.attrNames]
+        o = [getattr(other, x) for x in self.attrNames]
         return cmp(s, o)
 
 
@@ -140,7 +140,7 @@ class NibInfo(object):
 
     def _extractClassesFromNibFromBundle(self, nibName, bundle=None):
         if not bundle:
-            bundle = NSBundle.mainBundle()
+            bundle = objc.currentBundle()
         if nibName[-4:] == '.nib':
             resType = None
         else:
@@ -247,6 +247,9 @@ class NibInfo(object):
             for nib in clsInfo.nibs:
                 nibs[nib] = 1
 
+        writer.writeln("import objc")
+        writer.writeln("from Foundation import *")
+        writer.writeln("from AppKit import *")
         writer.writeln("from PyObjCTools import NibClassBuilder, AppHelper")
         writer.writeln()
         writer.writeln()
@@ -267,38 +270,37 @@ class NibInfo(object):
         writer.dedent()
 
     def _printClass(self, writer, clsInfo):
-            nibs = clsInfo.nibs
-            if len(nibs) > 1:
-                nibs[-2] = nibs[-2] + " and " + nibs[-1]
-                del nibs[-1]
-            nibs = ", ".join(nibs)
-            writer.writeln("# class defined in %s" % nibs)
-            writer.writeln("class %s(NibClassBuilder.AutoBaseClass):" % clsInfo.name)
-            writer.indent()
-            writer.writeln("# the actual base class is %s" % clsInfo.super)
-            outlets = clsInfo.outlets
-            actions = clsInfo.actions
-            if outlets:
-                writer.writeln("# The following outlets are added to the class:")
-                outlets.sort()
-                for o in outlets:
-                        writer.writeln("# %s" % o)
-                        #writer.writeln("%s = ivar('%s')" % (o, o))
-                writer.writeln()
-            if not actions:
-                writer.writeln("pass")
-                writer.writeln()
-            else:
-                if actions:
-                    actions.sort()
-                    for a in actions:
-                        writer.writeln("def %s(self, sender):" % a)
-                        writer.indent()
-                        writer.writeln("pass")
-                        writer.dedent()
-                    writer.writeln()
+        nibs = clsInfo.nibs
+        if len(nibs) > 1:
+            nibs[-2] = nibs[-2] + " and " + nibs[-1]
+            del nibs[-1]
+        nibs = ", ".join(nibs)
+        writer.writeln("# class defined in %s" % nibs)
+        writer.writeln("class %s(NibClassBuilder.AutoBaseClass):" % clsInfo.name)
+        writer.indent()
+        writer.writeln("# the actual base class is %s" % clsInfo.super)
+        outlets = clsInfo.outlets
+        actions = clsInfo.actions
+        if outlets:
+            writer.writeln("# The following outlets are added to the class:")
+            outlets.sort()
+            for o in outlets:
+                writer.writeln("# %s" % o)
             writer.writeln()
-            writer.dedent()
+        if not actions:
+            writer.writeln("pass")
+            writer.writeln()
+        else:
+            if actions:
+                actions.sort()
+                for a in actions:
+                    writer.writeln("def %s(self, sender):" % a)
+                    writer.indent()
+                    writer.writeln("pass")
+                    writer.dedent()
+                writer.writeln()
+        writer.writeln()
+        writer.dedent()
 
 
 def _frameworkForClass(className):
@@ -411,7 +413,7 @@ def usage(msg, code):
     print commandline_doc
     sys.exit(code)
 
-def test(nibFiles):
+def test(*nibFiles):
     for path in nibFiles:
         print "Loading", path
         extractClasses(path=path)
@@ -431,7 +433,7 @@ def test(nibFiles):
             print "Created class: %s, superclass: %s" % (cls.__name__,
                     cls.__bases__[0].__name__)
 
-def printTemplate(nibFiles):
+def printTemplate(*nibFiles):
     for path in nibFiles:
         extractClasses(path=path)
     _nibInfo.printTemplate()
@@ -455,9 +457,9 @@ def commandline():
         usage("No nib file specified.", 1)
 
     if doTest:
-        test(nibFiles)
+        test(*nibFiles)
     else:
-        printTemplate(nibFiles)
+        printTemplate(*nibFiles)
 
 
 if __name__ == "__main__":

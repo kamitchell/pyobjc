@@ -1,9 +1,4 @@
-#include "OC_PythonDictionary.h"
-#include "OC_PythonArray.h"
-#include "pyobjc.h"
-#include "objc_support.h"
-
-#import <Foundation/NSEnumerator.h>
+#import "OC_PythonDictionary.h"
 
 /*
  * OC_PythonDictionaryEnumerator - Enumerator for Python dictionaries
@@ -12,64 +7,51 @@
  */
 @interface OC_PythonDictionaryEnumerator  : NSEnumerator
 {
-        PyObject* value;
-	int       cur;
-	int       len;
+	OC_PythonDictionary* value;
+	BOOL valid;
+	int pos;
 }
-+newWithPythonObject:(PyObject*)value;
--initWithPythonObject:(PyObject*)value;
++ newWithWrappedDictionary:(OC_PythonDictionary*)value;
+- initWithWrappedDictionary:(OC_PythonDictionary*)value;
 -(void)dealloc;
 
 -(id)nextObject;
-@end // interface OC_PythonDictionaryEnumerator
+
+@end /* interface OC_PythonDictionaryEnumerator */
+
+
 
 @implementation OC_PythonDictionaryEnumerator
 
-+newWithPythonObject:(PyObject*)v;
++newWithWrappedDictionary:(OC_PythonDictionary*)v;
 {
-	OC_PythonDictionaryEnumerator* res = 
-		[[OC_PythonDictionaryEnumerator alloc] initWithPythonObject:v];
-	[res autorelease];
-	return res;
+	return [[[self alloc] initWithWrappedDictionary:v] autorelease];
 }
 
--initWithPythonObject:(PyObject*)v;
+-initWithWrappedDictionary:(OC_PythonDictionary*)v;
 {
-	value = PySequence_Fast(v, 
-		"pyObject of OC_PythonDictionaryEnumerator must be a sequence");
-	cur   = 0;
-	len = PySequence_Fast_GET_SIZE(value);
+	self = [super init];
+	if (!self) return nil;
+
+	value = [v retain];
+	valid = YES;
+	pos = 0;
 	return self;
 }
 
 -(void)dealloc
 {
-	Py_XDECREF(value);
+	[value release];
+	[super dealloc];
 }
 
 -(id)nextObject
 {
-	PyObject* v;
-	id result;
-	int err;
-
-	do {
-		if (cur >= len) return nil;
-
-		v = PySequence_Fast_GET_ITEM(value, cur++);
-		err = depythonify_c_value("@", v, &result);
-		if (err == -1) {
-			ObjCErr_ToObjC();
-			return NULL;
-		}
-
-		if (result == nil) {
-			NSLog(@"OC_PythonDictionaryEnumerator: Python dict with None as key");
-		}
-
-	} while (result == nil);
-
-	return result;
+	id key = nil;
+	if (valid) {
+		valid = [value wrappedKey:&key value:nil atPosition:&pos];
+	}
+	return key;
 }
 
 @end // implementation OC_PythonDictionaryEnumerator
@@ -87,14 +69,24 @@
 
 -initWithPythonObject:(PyObject*)v;
 {
-	value = v;
+	self = [super init];
+	if (!self) return nil;
+
 	Py_INCREF(v);
+	Py_XDECREF(value);
+	value = v;
 	return self;
 }
 
 -(void)dealloc
 {
-	Py_XDECREF(value);
+	PyObjC_BEGIN_WITH_GIL
+		PyObjC_UnregisterObjCProxy(value, self);
+		Py_XDECREF(value);
+	
+	PyObjC_END_WITH_GIL
+
+	[super dealloc];
 }
 
 -(PyObject*)__pyobjc_PythonObject__
@@ -105,7 +97,25 @@
 
 -(int)count
 {
-	return PyDict_Size(value);
+	int result;
+
+	PyObjC_BEGIN_WITH_GIL
+		result = PyDict_Size(value);
+
+	PyObjC_END_WITH_GIL
+
+	return result;
+}
+
+-(int)depythonify:(PyObject*)v toId:(id*)datum
+{
+	if (depythonify_c_value(@encode(id), v, datum) == -1) {
+		return -1;
+	}
+	if (*datum == nil) {
+		*datum = [NSNull null];
+	}
+	return 0;
 }
 
 -objectForKey:key
@@ -113,84 +123,128 @@
 	PyObject* v;
 	PyObject* k;
 	id result;
-	int err;
 
-	k = pythonify_c_value("@", &key);
-	if (k == NULL) {
-		ObjCErr_ToObjC();
-		return nil;
-	}
+	PyObjC_BEGIN_WITH_GIL
 
-	v = PyDict_GetItem(value, k);
+		if (key == [NSNull null]) {
+			Py_INCREF(Py_None);
+			k = Py_None;
+		} else {
+			k = PyObjC_IdToPython(key);
+			if (k == NULL) {
+				PyObjC_GIL_FORWARD_EXC();
+			}
+		}
 
-	if (!v) {
-	  Py_DECREF(k);
-	  return nil;
-	}
+		v = PyDict_GetItem(value, k);
+		Py_DECREF(k);
 
-	err = depythonify_c_value("@", v, &result);
-	Py_DECREF(k);
-	if (err == -1) {
-		ObjCErr_ToObjC();
-		return nil;
-	}
+		if (!v) {
+			PyErr_Clear();
+			PyObjC_GIL_RETURN(nil);
+		}
+
+		if ([self depythonify:v toId:&result] == -1) {
+			PyObjC_GIL_FORWARD_EXC();
+		}
+	
+	PyObjC_END_WITH_GIL
+
 	return result;
 }
 
 
 -(void)setObject:val forKey:key
 {
-	PyObject* v;
-	PyObject* k;
+	PyObject* v = NULL;
+	PyObject* k = NULL;
+	id null = [NSNull null];
 
-	v = pythonify_c_value("@", &val);
-	if (v == NULL) {
-		ObjCErr_ToObjC();
-		return;
-	}
+	PyObjC_BEGIN_WITH_GIL
+		if (val == null) {
+			Py_INCREF(Py_None);
+			v = Py_None;
+		} else {
+			v = PyObjC_IdToPython(val);
+			if (v == NULL) {
+				PyObjC_GIL_FORWARD_EXC();
+			}
+		}
 
-	k = pythonify_c_value("@", &key);
-	if (k == NULL) {
-		Py_DECREF(v);
-		ObjCErr_ToObjC();
-		return;
-	}
+		if (key == null) {
+			Py_INCREF(Py_None);
+			k = Py_None;
+		} else {
+			k = PyObjC_IdToPython(key);
+			if (k == NULL) {
+				Py_XDECREF(v);
+				PyObjC_GIL_FORWARD_EXC();
+			}
+		}
 
-	if (PyDict_SetItem(value, k, v) < 0) {
+		if (PyDict_SetItem(value, k, v) < 0) {
+			Py_XDECREF(v);
+			Py_XDECREF(k);
+			PyObjC_GIL_FORWARD_EXC();
+		}
+
 		Py_DECREF(v);
 		Py_DECREF(k);
-		ObjCErr_ToObjC();
-		return;
-	}
-	Py_DECREF(v);
-	Py_DECREF(k);
+
+	PyObjC_END_WITH_GIL
+}
+
+-(BOOL)wrappedKey:(id*)keyPtr value:(id*)valuePtr atPosition:(int*)positionPtr
+{
+	PyObject *pykey = NULL;
+	PyObject *pyvalue = NULL;
+	PyObject **pykeyptr = (keyPtr == nil) ? NULL : &pykey;
+	PyObject **pyvalueptr = (valuePtr == nil) ? NULL : &pyvalue;
+	PyObjC_BEGIN_WITH_GIL
+		if (!PyDict_Next(value, positionPtr, pykeyptr, pyvalueptr)) {
+			PyObjC_GIL_RETURN(NO);
+		}
+		if (keyPtr) {
+			if ([self depythonify:pykey toId:keyPtr] == -1) {
+				PyObjC_GIL_FORWARD_EXC();
+			}
+		}
+		if (valuePtr) {
+			if ([self depythonify:pyvalue toId:valuePtr] == -1) {
+				PyObjC_GIL_FORWARD_EXC();
+			}
+		}
+	PyObjC_END_WITH_GIL
+	return YES;
 }
 
 -(void)removeObjectForKey:key
 {
 	PyObject* k;
 
-	k = pythonify_c_value("@", &key);
-	if (k == NULL) {
-		ObjCErr_ToObjC();
-		return;
-	}
+	PyObjC_BEGIN_WITH_GIL
+		if (key == [NSNull null]) {
+			Py_INCREF(Py_None);
+			k = Py_None;
+		} else {
+			k = PyObjC_IdToPython(key);
+			if (k == NULL) {
+				PyObjC_GIL_FORWARD_EXC();
+			}
+		}
 
-	if (PyDict_DelItem(value, k) < 0) {
+		if (PyDict_DelItem(value, k) < 0) {
+			Py_DECREF(k);
+			PyObjC_GIL_FORWARD_EXC();
+		}
 		Py_DECREF(k);
-		ObjCErr_ToObjC();
-		return;
-	}
-	Py_DECREF(k);
+	
+	PyObjC_END_WITH_GIL
 }
 
--keyEnumerator
+-(NSEnumerator *)keyEnumerator
 {
-	PyObject* keys = PyDict_Keys(value);
-	id result = [OC_PythonDictionaryEnumerator newWithPythonObject:keys];
-	Py_DECREF(keys);
-
-	return result;
+	return [OC_PythonDictionaryEnumerator newWithWrappedDictionary:self];
 }
 
 @end  // interface OC_PythonDictionary

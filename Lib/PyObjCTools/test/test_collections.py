@@ -4,9 +4,9 @@ import objc
 from Foundation import *
 from PyObjCTools.Conversion import *
 
-samplePropertyList = '{ "" = 1; "x" = "2"; 1 = "one";}'
+samplePropertyList = u'{ "" = 1; "x" = "2"; 1 = "one";}'
 
-class TestCollections( unittest.TestCase ):
+class TestCollections(unittest.TestCase):
     def assertSameArrayContents(self, a1, a2):
         self.assertEqual(len(a1), len(a2))
 
@@ -23,7 +23,7 @@ class TestCollections( unittest.TestCase ):
         else:
             for o in a2:
                 a1.index(o)
-    
+
     def assertSameDictionaryContents(self, d1, d2):
         self.assertEqual(len(d1), len(d2))
 
@@ -39,7 +39,7 @@ class TestCollections( unittest.TestCase ):
             self.assert_(d2.has_key(k), "Missing key %s in %s"%(`k`, `d2`))
             self.assertEqual(d1[k], d2[k],
                              "assertSameDictionary() failed for key '%s'. [%s != %s]" % (k, d1[k], d2[k]))
-                             
+
     def testConversion(self):
         originalNSDictionary = NSString.propertyList(samplePropertyList)
         aPythonDictionary = pythonCollectionFromPropertyList(originalNSDictionary)
@@ -64,22 +64,20 @@ class TestCollections( unittest.TestCase ):
         def conversionHelper(anObject):
             return anObject
 
-        self.assertRaises(TypeError, propertyListFromPythonCollection, { '1' : type([]) })
-        propertyListFromPythonCollection({'1' : type([])}, conversionHelper)
+        self.assertRaises(TypeError, propertyListFromPythonCollection, { u'1' : type([]) })
+        propertyListFromPythonCollection({u'1' : type([])}, conversionHelper)
 
-        d = NSDictionary.dictionaryWithDictionary_( {'1' : NSBundle.mainBundle()} )
+        d = NSDictionary.dictionaryWithDictionary_( {u'1' : NSObject.alloc().init() })
+        # was: NSBundle.bundleForClass_(NSObject)} )
+        # XXX: using NSBundle doesn't work on GNUstep
+
         self.assertRaises(TypeError, pythonCollectionFromPropertyList, d)
         pythonCollectionFromPropertyList(d, conversionHelper)
 
-        
-
-def suite():
-    suite = unittest.TestSuite()
-    suite.addTest( unittest.makeSuite( TestCollections ) )
-    return suite
 
 if __name__ == '__main__':
     try:
         unittest.main( )
     except SystemExit :
         pass
+    objc.recycleAutoreleasePool()

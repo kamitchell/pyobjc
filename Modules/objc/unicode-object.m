@@ -3,22 +3,23 @@
  * strings
  */
 
-#include <Python.h>
 #include "pyobjc.h"
-#include "objc_support.h"
+
 #include <stddef.h>
+#include <Foundation/NSString.h>
 
 typedef struct {
 	PyUnicodeObject	base;
 	PyObject*	weakrefs;
 	id		nsstr;
+	PyObject* py_nsstr;
 } PyObjCUnicodeObject;
 
 PyDoc_STRVAR(class_doc,
 	"objc.pyobjc_unicode\n"
 	"\n"
 	"Subclass of unicode for representing NSString values. Use \n"
-	"the method pyobjc_NSString to access the NSString. \n"
+	"the method nsstring to access the NSString. \n"
 	"Note that instances are immutable and won't be updated when\n"
 	"the value of the NSString changes."
 );
@@ -26,9 +27,14 @@ PyDoc_STRVAR(class_doc,
 static void
 class_dealloc(PyObject* obj)
 {
-	id nsstr = ((PyObjCUnicodeObject*)obj)->nsstr;
-	PyObject* weakrefs = ((PyObjCUnicodeObject*)obj)->weakrefs;
+	PyObjCUnicodeObject* uobj = (PyObjCUnicodeObject*)obj;
+	id nsstr = uobj->nsstr;
+	PyObject* weakrefs = uobj->weakrefs;
+	PyObject* py_nsstr = uobj->py_nsstr;
 
+	PyObjC_UnregisterPythonProxy(nsstr, obj);
+
+	Py_XDECREF(py_nsstr);
 	[nsstr release];
 
 	if (weakrefs) {
@@ -41,42 +47,57 @@ class_dealloc(PyObject* obj)
 static PyObject* 
 meth_nsstring(PyObject* self)
 {
-	return PyObjCObject_New(((PyObjCUnicodeObject*)self)->nsstr);
+	PyObjCUnicodeObject* uobj = (PyObjCUnicodeObject*)self;
+	if (uobj->py_nsstr == NULL) {
+		uobj->py_nsstr = PyObjCObject_New(uobj->nsstr);
+	}
+	Py_INCREF(uobj->py_nsstr);
+	return uobj->py_nsstr;
 }
 
-static PyObject* 
-meth_syncNSString(PyObjCUnicodeObject* self)
+
+static PyObject*
+meth_getattro(PyObject *o, PyObject *attr_name)
 {
-	PyUnicodeObject  dummy;
-	const char* utf8 = [self->nsstr UTF8String];
-	PyUnicodeObject* tmp = (PyUnicodeObject*)PyUnicode_DecodeUTF8(utf8, strlen(utf8), "strict");
-
-	if (tmp == NULL) return NULL;
-
-	
-	PyUnicode_AS_UNICODE(&dummy) = PyMem_NEW(Py_UNICODE,
-		PyUnicode_GET_SIZE(tmp));
-	if (PyUnicode_AS_UNICODE(&dummy) == NULL) {
-		PyErr_NoMemory();
-		return NULL;
+	PyObject *res;
+	res = PyObject_GenericGetAttr(o, attr_name);
+	if (res == NULL) {
+		PyErr_Clear();
+		PyObject *py_nsstr = meth_nsstring(o);
+		res = PyObject_GenericGetAttr(py_nsstr, attr_name);
+		Py_XDECREF(py_nsstr);
 	}
-	PyMem_Free(PyUnicode_AS_UNICODE(self));
-	PyUnicode_AS_UNICODE(self) = PyUnicode_AS_UNICODE(&dummy);
-	PyUnicode_GET_SIZE(self) = PyUnicode_GET_SIZE(tmp);
-	memcpy((char*)PyUnicode_AS_DATA(self), PyUnicode_AS_DATA(tmp),
-		PyUnicode_GET_DATA_SIZE(tmp));
+	return res;
+}
 
-	self->base.hash = -1;
-	if (PyUnicode_GET_SIZE(tmp) == 0) {
-		self->base.hash = 0;
-	}
-	Py_XDECREF(self->base.defenc);
-	self->base.defenc = tmp->defenc;
-	Py_XINCREF(tmp->defenc);
-	Py_DECREF(tmp);
+static PyObject*
+meth_reduce(PyObject* self)
+{
+	PyObject* retVal = NULL;
+	PyObject *v = NULL;
+	PyObject *v2 = NULL;
 
-	Py_INCREF(Py_None);
-	return Py_None;
+	retVal = PyTuple_New(2);
+	if (retVal == NULL) goto error;
+
+	v = (PyObject*)&PyUnicode_Type;
+	Py_INCREF(v);
+	PyTuple_SET_ITEM(retVal, 0, v);
+
+	v = PyUnicode_FromObject(self);
+	if (v == NULL ) goto error;
+
+	v2 = PyTuple_New(1);
+	if (v2 == NULL) goto error;
+	PyTuple_SET_ITEM(v2, 0, v);
+	PyTuple_SET_ITEM(retVal, 1, v2);
+
+	return retVal;
+
+error:
+	Py_XDECREF(retVal);
+	Py_XDECREF(v);
+	return NULL;
 }
 
 static PyMethodDef class_methods[] = {
@@ -87,18 +108,42 @@ static PyMethodDef class_methods[] = {
 	  "directly access NSString instance"
 	},
 	{
-	  "syncFromNSString",
-	  (PyCFunction)meth_syncNSString,
+	  "__reduce__",
+	  (PyCFunction)meth_reduce,
 	  METH_NOARGS,
-	  "Copy contents of the NSString to the unicode object"
+	  "Used for pickling"
 	},
-        { 0, 0, 0, 0 } /* sentinel */
+	{ 0, 0, 0, 0 } /* sentinel */
+};
+
+static PyObject*
+nsstring_get__pyobjc_object__(PyObject *self, void *closure __attribute__((__unused__))) {
+	return meth_nsstring(self);
+}
+
+static PyGetSetDef nsstring_getsetters[] = {
+	{
+		"__pyobjc_object__",
+		(getter)nsstring_get__pyobjc_object__, NULL,
+		"raw NSString instance",
+		NULL
+	},
+	{
+		NULL,
+		NULL, NULL,
+		NULL,
+		NULL
+	}
 };
 
 static PyObject* 
-class_new(PyTypeObject* type, PyObject* args, PyObject* kwds)
+class_new(
+	PyTypeObject* type __attribute__((__unused__)), 
+	PyObject* args __attribute__((__unused__)), 
+	PyObject* kwds __attribute__((__unused__)))
 {
-	PyErr_SetString(PyExc_TypeError, "Cannot create objc.unicode from Python");
+	PyErr_SetString(PyExc_TypeError, 
+			"Cannot create instances of 'objc.unicode' in Python");
 	return NULL;
 }
 
@@ -121,7 +166,7 @@ PyTypeObject PyObjCUnicode_Type = {
 	0,					/* tp_hash */
 	0,					/* tp_call */
 	0,					/* tp_str */
-	0,					/* tp_getattro */
+	meth_getattro,		/* tp_getattro */
 	0,					/* tp_setattro */
 	0,					/* tp_as_buffer */
 	Py_TPFLAGS_DEFAULT,			/* tp_flags */
@@ -134,7 +179,7 @@ PyTypeObject PyObjCUnicode_Type = {
 	0,					/* tp_iternext */
 	class_methods,				/* tp_methods */
 	0,					/* tp_members */
-	0,					/* tp_getset */
+	nsstring_getsetters,			/* tp_getset */
 	&PyUnicode_Type,			/* tp_base */
 	0,					/* tp_dict */
 	0,					/* tp_descr_get */
@@ -144,42 +189,102 @@ PyTypeObject PyObjCUnicode_Type = {
 	0,					/* tp_alloc */
 	class_new,				/* tp_new */
 	0,		        		/* tp_free */
+	0,					/* tp_is_gc */
+	0,                                      /* tp_bases */
+	0,                                      /* tp_mro */
+	0,                                      /* tp_cache */
+	0,                                      /* tp_subclasses */
+	0,                                      /* tp_weaklist */
+	0                                       /* tp_del */
 };
 
 PyObject* 
 PyObjCUnicode_New(NSString* value)
 {
-	const char* utf8 = [value UTF8String];
-	PyUnicodeObject* tmp = (PyUnicodeObject*)PyUnicode_DecodeUTF8(utf8, strlen(utf8), "strict");
+	/* Conversion to PyUnicode without creating an autoreleased object.
+	 *
+	 * NOTE: A final optimization is removing the copy of 'characters', but
+	 * that can only be done when sizeof(unichar) == Py_UNICODE_SIZE.
+	 *
+	 * The reason for doing this: NSThread 
+	 *     +detachNewThreadSelector:toTarget:withObject:, with a string
+	 *     as one of the arguments.
+	 *
+	 * Another reason is that the following loop 'leaks' memory when using
+	 * -UTF8String:
+	 *  	while True:
+	 *  		NSString.alloc().init()
+	 *
+	 *  while the following doesn't:
+	 *
+	 *  	while True:
+	 *  		NSArray.alloc().init()
+	 */
 	PyObjCUnicodeObject* result;
-
-	if (tmp == NULL) return NULL;
-
+// XXX - I don't know how to get gcc to let me use sizeof(unichar)
+#ifdef PyObjC_UNICODE_FAST_PATH
+	int length = [value length];
 	result = PyObject_New(PyObjCUnicodeObject, &PyObjCUnicode_Type);
-	PyUnicode_AS_UNICODE(result) = PyMem_NEW(Py_UNICODE,
-		PyUnicode_GET_SIZE(tmp));
+	PyUnicode_AS_UNICODE(result) = PyMem_NEW(Py_UNICODE, length);
 	if (PyUnicode_AS_UNICODE(result) == NULL) {
 		Py_DECREF((PyObject*)result);
 		PyErr_NoMemory();
 		return NULL;
 	}
-	PyUnicode_GET_SIZE(result) = PyUnicode_GET_SIZE(tmp);
-	memcpy((char*)PyUnicode_AS_DATA(result), PyUnicode_AS_DATA(tmp),
-		PyUnicode_GET_DATA_SIZE(tmp));
+	[value getCharacters:(unichar *)PyUnicode_AS_UNICODE(result)];
+	PyUnicode_GET_SIZE(result) = length;
+#else
+	int i, length;
+	unichar* volatile characters = NULL;
+	NSRange range;
+
+	PyObjC_DURING
+		length = [value length];
+		characters = PyMem_Malloc(sizeof(unichar) * length);
+		if (characters == NULL) {
+			PyErr_NoMemory();
+			NS_VALUERETURN(NULL, PyObject*);
+		}
+
+		range = NSMakeRange(0, length);
+
+		[value getCharacters: characters range: range];
+
+	PyObjC_HANDLER
+		if (characters) {
+			PyMem_Free(characters);
+			characters = NULL;
+		}
+		PyObjCErr_FromObjC(localException);
+		NS_VALUERETURN(NULL, PyObject*);
+	PyObjC_ENDHANDLER
+
+	result = PyObject_New(PyObjCUnicodeObject, &PyObjCUnicode_Type);
+	PyUnicode_AS_UNICODE(result) = PyMem_NEW(Py_UNICODE, length);
+	if (PyUnicode_AS_UNICODE(result) == NULL) {
+		Py_DECREF((PyObject*)result);
+		PyMem_Free(characters); characters = NULL;
+		PyErr_NoMemory();
+		return NULL;
+	}
+	PyUnicode_GET_SIZE(result) = length;
+	for (i = 0; i < length; i++) {
+		PyUnicode_AS_UNICODE(result)[i] = (Py_UNICODE)(characters[i]);
+	}
+	PyMem_Free(characters); characters = NULL;
+#endif
+
+	result->base.defenc = NULL;
 
 	result->base.hash = -1;
 
-	if (PyUnicode_GET_SIZE(tmp) == 0) {
+	if (PyUnicode_GET_SIZE(result) == 0) {
 		result->base.hash = 0;
 	}
 
-	result->base.defenc = tmp->defenc;
-	Py_XINCREF(tmp->defenc);
-	Py_DECREF(tmp);
-
-	result->weakrefs = 0;
-	result->nsstr = value;
-	[value retain];
+	result->weakrefs = NULL;
+	result->py_nsstr = NULL;
+	result->nsstr = [value retain];
 
 	return (PyObject*)result;
 }

@@ -3,20 +3,20 @@ import objc
 
 from Foundation import *
 
-class TestNSArrayInteraction( unittest.TestCase ):
-    def testRepeatedAllocInit( self ):
+class TestNSArrayInteraction(unittest.TestCase):
+    def testRepeatedAllocInit(self):
         for i in range(1,1000):
             a = NSArray.alloc().init()
 
-    def testIndices( self ):
-        x = NSArray.arrayWithArray_( ["foo", "bar", "baz"] )
+    def testIndices(self):
+        x = NSArray.arrayWithArray_( [u"foo", u"bar", u"baz"] )
 
-        self.assertEquals( x.indexOfObject_("bar"), 1 )
+        self.assertEquals( x.indexOfObject_(u"bar"), 1 )
 
         self.assertRaises( IndexError, x.objectAtIndex_, 100)
 
-    def testEnumeration( self ):
-        x = NSArray.arrayWithArray_([1, 2, "foo", "bar", "", "baz"])
+    def testEnumeration(self):
+        x = NSArray.arrayWithArray_([1, 2, u"foo", u"bar", u"", u"baz"])
         y = []
 
         for o in x:
@@ -24,18 +24,18 @@ class TestNSArrayInteraction( unittest.TestCase ):
 
         self.assertEquals(len(x), len(y))
 
-    def testContains( self ):
-        x = NSArray.arrayWithArray_( ["foo", "bar", "baz"] )
+    def testContains(self):
+        x = NSArray.arrayWithArray_( [u"foo", u"bar", u"baz"] )
         self.assertEquals( x.count(), 3 )
         self.assertEquals( len(x), 3 )
 
-        self.assert_( x.containsObject_("foo") )
-        self.assert_( not x.containsObject_("dumbledorf") )
+        self.assert_( x.containsObject_(u"foo") )
+        self.assert_( not x.containsObject_(u"dumbledorf") )
 
-        self.assert_( "foo" in x )
-        self.assert_( not "dumbledorf" in x )
+        self.assert_( u"foo" in x )
+        self.assert_( not u"dumbledorf" in x )
 
-    def testIn( self ):
+    def testIn(self):
         x = NSMutableArray.array()
         for i in range(0, 100):
             x.addObject_(i)
@@ -57,13 +57,13 @@ class TestNSArrayInteraction( unittest.TestCase ):
 
         self.assert_( 101 not in x )
         self.assert_( None not in x )
-        self.assert_( "foo bar" not in x )
+        self.assert_( u"foo bar" not in x )
 
     def assertSlicesEqual(self,  x, y, z):
         self.assertEquals( x, x[:] )
         self.assertEquals( y, y[:] )
         self.assertEquals( z, z[:] )
-        
+
         self.assertEquals( x[25:75], y[25:75] )
         self.assertEquals( x[25:75], z[25:75] )
         self.assertEquals( y[25:75], z[25:75] )
@@ -88,7 +88,7 @@ class TestNSArrayInteraction( unittest.TestCase ):
         self.assertEquals( x[-15:-5], z[-15:-5] )
         self.assertEquals( y[-15:-5], z[-15:-5] )
 
-    def testSlice( self ):
+    def testSlice(self):
         x = NSMutableArray.array()
         for i in range(0, 100):
             x.addObject_(i)
@@ -125,6 +125,7 @@ class TestNSArrayInteraction( unittest.TestCase ):
         self.assertSlicesEqual(x, y, z)
 
     def test_mixSliceNDice(self):
+        # This test failes on Python 2.2, that is expected.
         x = range(0, 10)
         y = NSMutableArray.arrayWithArray_( range(0, 10) )
 
@@ -177,13 +178,182 @@ class TestNSArrayInteraction( unittest.TestCase ):
         self.assert_(y[2] == 3)
         self.assert_(z[3] == 4)
 
+class TestNSArraySpecialMethods(unittest.TestCase):
+    """
+    Test calling 'difficult' methods from Python
+    """
+
+    def test_initWithObjects_count_(self):
+        a = NSArray.alloc().initWithObjects_count_((u'a',u'b',u'c',u'd'), 3)
+        self.assertEquals(a, [u'a',u'b',u'c'])
+
+        import warnings
+        warnings.filterwarnings('ignore',
+                category=objc.UninitializedDeallocWarning)
+
+        try:
+            self.assertRaises(ValueError, NSArray.alloc().initWithObjects_count_, (u'a',u'b'), 3)
+
+        finally:
+            del warnings.filters[0]
 
 
+    def test_arrayWithObjects_count_(self):
+        a = NSArray.arrayWithObjects_count_((u'a',u'b',u'c',u'd'), 3)
+        self.assertEquals(a, [u'a',u'b',u'c'])
 
-def suite():
-    suite = unittest.TestSuite()
-    suite.addTest( unittest.makeSuite( TestNSArrayInteraction ) )
-    return suite
+        self.assertRaises(ValueError, NSArray.arrayWithObjects_count_, (u'a',u'b'), 3)
+
+    def test_arrayByAddingObjects_count_(self):
+        if objc.platform != 'MACOSX' and not hasattr(NSArray, 'arrayByAddingObjects_count_'): return
+
+        a = NSArray.arrayWithArray_((u'a', u'b', u'c'))
+        self.assertEquals(a, (u'a', u'b', u'c'))
+
+        b = a.arrayByAddingObjects_count_((u'd', u'e', u'f'), 3)
+        self.assertEquals(a, (u'a', u'b', u'c'))
+        self.assertEquals(b, (u'a', u'b', u'c', u'd', u'e', u'f'))
+
+        self.assertRaises(ValueError, a.arrayByAddingObjects_count_, (u'a',u'b'), 3)
+    def test_sortedArrayUsingFunction_context_(self):
+        a = NSArray.arrayWithArray_((u'a', u'b', u'c'))
+        self.assertEquals(a, (u'a', u'b', u'c'))
+
+        def cmpfunc(l, r, c):
+            return -cmp(l,r)
+
+        b = a.sortedArrayUsingFunction_context_(cmpfunc, u'hello')
+        self.assertEquals(a, (u'a', u'b', u'c'))
+        self.assertEquals(b, (u'c', u'b', u'a'))
+
+    def test_sortedArrayUsingFunction_context_hint_(self):
+        a = NSArray.arrayWithArray_((u'a', u'b', u'c'))
+        self.assertEquals(a, (u'a', u'b', u'c'))
+
+        def cmpfunc(l, r, c):
+            return -cmp(l,r)
+
+        b = a.sortedArrayUsingFunction_context_hint_(cmpfunc, u'hello', a.sortedArrayHint())
+        self.assertEquals(a, (u'a', u'b', u'c'))
+        self.assertEquals(b, (u'c', u'b', u'a'))
+
+class TestNSMutableArrayInteraction(unittest.TestCase):
+
+    def testRemoveObjects(self):
+        a = NSMutableArray.arrayWithArray_(range(10))
+
+        self.assertEquals(len(a), 10)
+        self.assertEquals(a[0], 0)
+        self.assertEquals(a[1], 1)
+        self.assertEquals(a[2], 2)
+
+        a.removeObjectsFromIndices_numIndices_([2, 4, 6, 8], 3)
+
+        self.assertEquals(len(a), 7)
+        self.assertEquals(a, (0, 1, 3, 5, 7, 8, 9))
+
+
+    def testReplaceObjects(self):
+        if objc.platform == 'MACOSX' or hasattr(NSMutableArray, 'replaceObjectsInRange_withObjects_count_'):
+
+            a = NSMutableArray.arrayWithArray_(range(4))
+            self.assertEquals(a, (0, 1, 2, 3))
+
+            a.replaceObjectsInRange_withObjects_count_(
+                (1,2), [u"a", u"b", u"c", u"d"], 3)
+
+            self.assertEquals(a, (0, u"a", u"b", u"c", 3))
+
+    def testSortInvalid(self):
+        """
+        Invalid calls to sortUsingFunction:context:
+        """
+
+        a = NSMutableArray.arrayWithArray_(range(4))
+        self.assertEquals(a, (0, 1, 2, 3))
+
+        self.assertRaises(TypeError, a.sortUsingFunction_context_, dir)
+        self.assertRaises(TypeError, a.sortUsingFunction_context_, dir, 1, 2)
+        self.assertRaises(TypeError, a.sortUsingFunction_context_, cmp, u'a')
+
+    def testSort2(self):
+        a = NSMutableArray.arrayWithArray_(range(10))
+        self.assertEquals(a, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+
+        if objc.platform == 'MACOSX' or hasattr(a, 'sortUsingFunction_context_range_'):
+            def cmpfunc(l, r, c):
+                return -cmp(l,r)
+
+            a.sortUsingFunction_context_range_(cmpfunc, u"a", (4, 4))
+
+            self.assertEquals(a, (0, 1, 2, 3, 7, 6, 5, 4, 8, 9))
+
+    def testSort3(self):
+        """ check the sort method, list interface compatibility """
+
+        a = NSMutableArray.arrayWithArray_(range(4))
+        self.assertEquals(a, (0, 1, 2, 3))
+
+        def cmpfunc(l, r):
+            return -cmp(l,r)
+
+        a.sort(cmpfunc)
+
+        self.assertEquals(a, (3, 2, 1, 0))
+
+        a.sort()
+        self.assertEquals(a, (0, 1, 2, 3))
+
+    def testSort1(self):
+        a = NSMutableArray.arrayWithArray_(range(4))
+        self.assertEquals(a, (0, 1, 2, 3))
+
+        def cmpfunc(l, r, c):
+            return -cmp(l,r)
+
+        a.sortUsingFunction_context_(cmpfunc, u"a")
+
+        self.assertEquals(a, (3, 2, 1, 0))
+
+    def testSort2(self):
+        a = NSMutableArray.arrayWithArray_(range(10))
+        self.assertEquals(a, (0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+
+        if objc.platform == 'MACOSX' or hasattr(a, 'sortUsingFunction_context_range_'):
+            def cmpfunc(l, r, c):
+                return -cmp(l,r)
+
+            a.sortUsingFunction_context_range_(cmpfunc, u"a", (4, 4))
+
+            self.assertEquals(a, (0, 1, 2, 3, 7, 6, 5, 4, 8, 9))
+
+    def testSort3(self):
+        """ check the sort method, list interface compatibility """
+
+        a = NSMutableArray.arrayWithArray_(range(4))
+        self.assertEquals(a, (0, 1, 2, 3))
+
+        def cmpfunc(l, r):
+            return -cmp(l,r)
+
+        a.sort(cmpfunc)
+
+        self.assertEquals(a, (3, 2, 1, 0))
+
+        a.sort()
+
+        self.assertEquals(a, (0, 1, 2, 3))
+
+    def test_unsupportedMethods(self):
+        #
+        # Check that calling unsupported methods results in a TypeError
+        #
+        # NOTE: Some of these don't even exist on GNUstep
+        o = NSArray.arrayWithArray_(range(4))
+        self.assertRaises(TypeError, o.getObjects_)
+        self.assertRaises(TypeError, o.getObjects_range_, (1,2))
+        if objc.platform == 'MACOSX' or hasattr(o, 'apply_context_'):
+            self.assertRaises(TypeError, o.apply_context_, lambda x, y:None, 0)
 
 if __name__ == '__main__':
-    unittest.main( )
+    unittest.main()
