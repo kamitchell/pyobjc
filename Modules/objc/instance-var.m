@@ -1,6 +1,4 @@
-#include <Python.h>
-//#include <Foundation/Foundation.h>
-#include "objc_support.h"
+#include "pyobjc.h"
 
 /*
  * descriptor objc_ivar
@@ -16,160 +14,211 @@
  */
 
 static void
-ivar_dealloc(ObjCIvar* ivar)
+ivar_dealloc(PyObjCInstanceVariable* ivar)
 {
 	PyMem_Free(ivar->name);
+	PyMem_Free(ivar->type);
 	ivar->ob_type->tp_free((PyObject*)ivar);
 }
 
 static PyObject*
-ivar_repr(ObjCIvar* self)
+ivar_repr(PyObjCInstanceVariable* self)
 {
-	char buf[256];
-
-	snprintf(buf, sizeof(buf), "<instance-variable %s>", self->name);
-	return PyString_FromString(buf);
+	if (self->isOutlet) {
+		return PyString_FromFormat("<IBOutlet %s>", self->name);
+	} else {
+		return PyString_FromFormat("<instance-variable %s>", self->name);
+	}
 }
 
 static PyObject*
-ivar_descr_get(ObjCIvar* self, PyObject* obj, PyObject* type)
+ivar_descr_get(PyObjCInstanceVariable* self, PyObject* obj, PyObject* type __attribute__((__unused__)))
 {
-	Ivar var;
+	PyObjCRT_Ivar_t var;
 	id   objc;
-	int  size;
-	void* buf;
 	PyObject* res;
 
-	if (!obj || ObjCClass_Check(obj)) {
+	if (!obj || PyObjCClass_Check(obj)) {
 		PyErr_SetString(PyExc_TypeError,
 			"Cannot access Objective-C instance-variables "
 			"through class");
 		return NULL;
 	}
 
-	if (!ObjCObject_Check(obj)) {
+	if (!PyObjCObject_Check(obj)) {
 		PyErr_SetString(PyExc_TypeError, 
 		    "objc_ivar descriptor on a non-objc object");
 		return NULL;
 	}
-	objc = ((ObjCObject*)obj)->objc_object;
+	objc = PyObjCObject_GetObject(obj);
+	if (objc == NULL) {
+		PyErr_SetString(PyExc_TypeError,
+		   "Cannot access Objective-C instance-variables of NULL");
+		return NULL;
+	}
 
-	var = class_getInstanceVariable([objc class], self->name);
+	var = class_getInstanceVariable(GETISA(objc), self->name);
 	if (var == NULL) {
 		PyErr_SetString(PyExc_RuntimeError, 
 		    "objc_ivar descriptor for non-existing instance variable");
 		return NULL;
 	}	
-	
-	size = objc_sizeof_type(var->ivar_type);
-	buf = alloca(size);
-	if (buf == NULL) {
-		return PyErr_NoMemory();
-	}
-	object_getInstanceVariable(objc, self->name, buf);
 
-	res = pythonify_c_value(var->ivar_type, buf);
+	if (self->isSlot) {
+		res = *(PyObject**)(((char*)objc) + var->ivar_offset);
+
+		if (res == NULL) {
+			PyErr_Format(PyExc_AttributeError,
+				"No attribute %s\n", var->ivar_name);
+		} else {
+			Py_INCREF(res);
+		}
+	} else {
+		res = pythonify_c_value(var->ivar_type, ((char*)objc) + var->ivar_offset );
+	}
 	return res;
 }
 
 static int
-ivar_descr_set(ObjCIvar* self, PyObject* obj, PyObject* value)
+ivar_descr_set(PyObjCInstanceVariable* self, PyObject* obj, PyObject* value)
 {
-	Ivar var;
+	volatile PyObjCRT_Ivar_t var;
 	id   objc;
 	int  size;
-	void* buf;
-	const char* res;
+	int res;
 
-	if (!obj || ObjCClass_Check(obj)) {
+	if (value == NULL && !self->isSlot) {
+		PyErr_SetString(PyExc_TypeError,
+			"Cannot delete Objective-C instance variables");
+		return -1;
+	}
+
+	if (!obj || PyObjCClass_Check(obj)) {
 		PyErr_SetString(PyExc_TypeError,
 			"Cannot access Objective-C instance-variables "
 			"through class");
 		return -1;
 	}
 
-	if (!ObjCObject_Check(obj)) {
+	if (!PyObjCObject_Check(obj)) {
 		PyErr_SetString(PyExc_TypeError, 
 		    "objc_ivar descriptor on a non-objc object");
 		return -1;
 	}
-	objc = ((ObjCObject*)obj)->objc_object;
-
-	var = class_getInstanceVariable([objc class], self->name);
-	if (var == NULL) {
-		PyErr_SetString(PyExc_RuntimeError, 
-		    "objc_ivar descriptor for non-existing instance variable");
+	objc = PyObjCObject_GetObject(obj); 
+	if (objc == NULL) {
+		PyErr_SetString(PyExc_TypeError,
+		   "Cannot access Objective-C instance-variables of NULL");
 		return -1;
-	}	
+	}
+
+	if (self->ivar == NULL) {
+		var = class_getInstanceVariable(GETISA(objc), self->name);
+		if (var == NULL) {
+			PyErr_SetString(PyExc_RuntimeError, 
+			    "objc_ivar descriptor for non-existing instance "
+			    "variable");
+			return -1;
+		}	
+		self->ivar = var;
+	} else {
+		var = self->ivar;
+	}
 	
-	size = objc_sizeof_type(var->ivar_type);
-	buf = alloca(size);
-	buf = PyMem_Malloc(size);
-	if (buf == NULL) {
-		PyErr_NoMemory();
-		return -1;
+
+	if (self->isSlot) {
+		PyObject** slotval = (PyObject**)(((char*)objc) + var->ivar_offset);
+		Py_XINCREF(value);
+		Py_XDECREF(*slotval);
+		*slotval = value;
+
+		return 0;
 	}
 
-	res = depythonify_c_value(var->ivar_type, value, buf);
-	if (res != NULL) {
-		PyErr_SetString(objc_error, res);
-		return -1;
-	}
-	if (strcmp(var->ivar_type, "@") == 0) {
+	if (strcmp(var->ivar_type, @encode(id)) == 0) {
 		/* Automagically manage refcounting of instance variables */
-		id  old_value = nil;
+		id new_value;
 
-		object_getInstanceVariable(objc, self->name, (void*)&old_value);
-		[*(id*)buf retain];
-		[old_value release];
+		res = depythonify_c_value(@encode(id), value, &new_value);
+		if (res == -1) {
+			return -1;
+		}
 
+		if (!self->isOutlet) {
+			PyObjC_DURING
+				[new_value retain];
+				[*(id*)(((char*)objc)+var->ivar_offset) release];
+			PyObjC_HANDLER
+				NSLog(@"PyObjC: ignoring exception during attribute replacement", localException);
+			PyObjC_ENDHANDLER
+		}
+
+		*(id*)(((char*)objc)+var->ivar_offset) = new_value;
+
+		return 0;
 	}
-	if (strcmp(var->ivar_type, "@") == 0) {
-		object_setInstanceVariable(objc, self->name, *(id*)buf);
-	} else {	
-		object_setInstanceVariable(objc, self->name, *(void**)buf);
+
+	size = PyObjCRT_SizeOfType(var->ivar_type);
+	if (size == -1) {
+		return -1;
 	}
-	if (strcmp(var->ivar_type, "@") == 0) {
-		id  old_value = nil;
-		object_getInstanceVariable(objc, self->name, (void*)&old_value);
+	res = depythonify_c_value(var->ivar_type, value, 
+		(void*)(((char*)objc)+var->ivar_offset));
+	if (res == -1) {
+		return -1;
 	}
-	if (size > 1024) PyMem_Free(buf);
 
 	return 0;
 }
 
 static int
-ivar_init(ObjCIvar* self, PyObject* args, PyObject* kwds)
+ivar_init(PyObjCInstanceVariable* self, PyObject* args, PyObject* kwds)
 {
-static  char* keywords[] = { "name", "type", NULL };
+static  char* keywords[] = { "name", "type", "isOutlet", NULL };
 	char* name = NULL;
-	char* type = "@";
+	char* type = @encode(id);
+	PyObject* isOutletObj = NULL;
 
-	if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|s:objc_ivar",
-			keywords, &name, &type))
+	if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|sO:objc_ivar",
+			keywords, &name, &type, &isOutletObj)) {
 		return -1;
+	}
 
-	self->name = strdup(name);	
-	self->type[0] = *type;
-	self->type[1] = '\0';
+	self->name = PyObjCUtil_Strdup(name);
+	if (self->name == NULL) {
+		return -1;
+	}
+	self->type = PyObjCUtil_Strdup(type);
+    if(self->type == NULL) {
+		PyMem_Free(self->name);
+        return -1;
+    }
+	if (isOutletObj) {
+		self->isOutlet = PyObject_IsTrue(isOutletObj);
+	} else {
+		self->isOutlet = 0;
+	}
+	self->ivar = NULL;
+	self->isSlot = 0;
+
 	return 0;
 }
 
 PyDoc_STRVAR(ivar_doc,
-"objc_ivar(name, type='@') -> instance-variable\n"
+"ivar(name, type='@', isOutlet=False) -> instance-variable\n"
 "\n"
-"Creates a descriptor for accessing an objective-C instance variable.\n\n"
-"This should only be used in the definition of objective-C subclasses, and\n"
+"Creates a descriptor for accessing an Objective-C instance variable.\n\n"
+"This should only be used in the definition of Objective-C subclasses, and\n"
 "will then automaticly define the instance variable in the objective-C side.\n"
 "\n"
-"'type' is optional and should be a 1 character signature string.\n"
+"'type' is optional and should be a signature string.\n"
 );
 
-PyTypeObject ObjCIvar_Type = {
+PyTypeObject PyObjCInstanceVariable_Type = {
 	PyObject_HEAD_INIT(&PyType_Type)             
 	0,                                           
-	"objc_ivar",                             
-	sizeof(ObjCIvar),                       
+	"ivar",                             
+	sizeof(PyObjCInstanceVariable),                       
 	0,                                           
 	(destructor)ivar_dealloc,               /* tp_dealloc */
 	0,                                      /* tp_print */
@@ -202,21 +251,41 @@ PyTypeObject ObjCIvar_Type = {
 	(descrgetfunc)ivar_descr_get,           /* tp_descr_get */
 	(descrsetfunc)ivar_descr_set,           /* tp_descr_set */
 	0,                                      /* tp_dictoffset */
-	(initproc)ivar_init,			/* tp_init */
+	(initproc)ivar_init,                    /* tp_init */
 	PyType_GenericAlloc,                    /* tp_alloc */
 	PyType_GenericNew,                      /* tp_new */
-	0,                           		/* tp_free */
+	0,                                      /* tp_free */
+	0,                                      /* tp_is_gc */
+	0,                                      /* tp_bases */
+	0,                                      /* tp_mro */
+	0,                                      /* tp_cache */
+	0,                                      /* tp_subclasses */
+	0,                                      /* tp_weaklist */
+	0                                       /* tp_del */
 };
 
-PyObject* ObjCInstanceVar_New(char* name)
+PyObject* 
+PyObjCInstanceVariable_New(char* name)
 {
 	PyObject* result;
 
-	result = ObjCIvar_Type.tp_alloc(&ObjCIvar_Type, 0);
+	result = PyObjCInstanceVariable_Type.tp_alloc(&PyObjCInstanceVariable_Type, 0);
 	if (result == NULL) {
 		return NULL;
 	}
-	((ObjCIvar*)result)->name = strdup(name);
-	((ObjCIvar*)result)->type[0] = '\0';
+	((PyObjCInstanceVariable*)result)->type = PyObjCUtil_Strdup("");
+	if (((PyObjCInstanceVariable*)result)->type == NULL) {
+		Py_DECREF(result);
+		return NULL;
+	}
+	((PyObjCInstanceVariable*)result)->isOutlet = 0;
+	((PyObjCInstanceVariable*)result)->isSlot = 0;
+	((PyObjCInstanceVariable*)result)->ivar = 0;
+	((PyObjCInstanceVariable*)result)->name = PyObjCUtil_Strdup(name);
+	if (((PyObjCInstanceVariable*)result)->name == NULL) {
+		PyMem_Free(((PyObjCInstanceVariable*)result)->type);
+		Py_DECREF(result);
+		return NULL;
+	}
 	return result;
 }

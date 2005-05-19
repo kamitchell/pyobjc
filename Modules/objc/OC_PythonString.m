@@ -1,49 +1,79 @@
-/* Copyright (c) 1996,97 by Lele Gaifax.  All Rights Reserved
- *
- * This software may be used and distributed freely for any purpose
- * provided that this notice is included unchanged on any and all
- * copies. The author does not warrant or guarantee this software in
- * any way.
- *
- * This file is part of the PyObjC package.
- *
- * RCSfile: OC_PythonString.m,v
- * Revision: 1.9
- * Date: 1998/01/04 17:59:22
- *
- * Created Thu Sep  5 19:49:36 1996.
- */
+#import "OC_PythonString.h"
 
-#include "OC_PythonString.h"
+@implementation OC_PythonString 
 
-@implementation OC_PythonString
-
-+ (id <PythonObject>) fromString:(char *) str andSize:(int) size
++ newWithPythonObject:(PyObject*)v;
 {
-	PyObject *pystr = PyString_FromStringAndSize (str, size);
-	id <PythonObject> result = [self newWithObject:pystr];
+	OC_PythonString* res;
 
-	Py_DECREF(pystr);
-	return result;
+	res = [[OC_PythonString alloc] initWithPythonObject:v];
+	[res autorelease];
+	return res;
 }
 
-+ (id <PythonObject>) fromString:(char *) str
+- initWithPythonObject:(PyObject*)v;
 {
-	PyObject *pystr = PyString_FromString(str);
-	id <PythonObject> result = [self newWithObject:pystr];
-
-	Py_DECREF(pystr);
-	return result;
+	Py_INCREF(v);
+	Py_XDECREF(value);
+	value = v;
+	return self;
 }
 
-- (int) size
+-(PyObject*)__pyobjc_PythonObject__
 {
-	return PyString_Size([self pyObject]);
+	Py_INCREF(value);
+	return value;
 }
 
-- (char *) asString
+-(void)dealloc
 {
-	return PyString_AsString([self pyObject]);
+	PyObjC_BEGIN_WITH_GIL
+		PyObjC_UnregisterObjCProxy(value, self);
+		[realObject release];
+		Py_XDECREF(value);
+	PyObjC_END_WITH_GIL
+
+	[super dealloc];
 }
 
-@end /* OC_PythonString class implementation */
+-(id)__realObject__
+{
+	static int supportsNoCopy = -1;
+	if (supportsNoCopy == -1) {
+		supportsNoCopy = (int)[NSString instancesRespondToSelector:@selector(initWithBytesNoCopy:length:encoding:freeWhenDone:)];
+	}
+	if (!realObject) {
+		if (supportsNoCopy) {
+			// Mac OS X 10.3+
+			realObject = [[NSString alloc]
+				initWithBytesNoCopy:PyString_AS_STRING(value)
+							 length:(unsigned)PyString_GET_SIZE(value)
+						   encoding:[NSString defaultCStringEncoding]
+					   freeWhenDone:NO];
+		} else {
+			// Mac OS X 10.2
+			realObject = [[NSString alloc]
+			    initWithBytes:PyString_AS_STRING(value)
+		  	           length:(unsigned)PyString_GET_SIZE(value)
+			         encoding:[NSString defaultCStringEncoding]];
+		}
+	}
+	return realObject;
+}
+
+-(unsigned)length
+{
+	return [((NSString *)[self __realObject__]) length];
+}
+
+-(unichar)characterAtIndex:(unsigned)anIndex
+{
+	return [((NSString *)[self __realObject__]) characterAtIndex:anIndex];
+}
+
+-(void)getCharacters:(unichar *)buffer range:(NSRange)aRange
+{
+	[((NSString *)[self __realObject__]) getCharacters:buffer range:aRange];
+}
+
+@end /* implementation OC_PythonString */

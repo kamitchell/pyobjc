@@ -2,7 +2,6 @@
  * Implements a function to fetch the list of objective-C classes known
  * in the runtime.
  */
-
 #include "pyobjc.h"
 
 #ifndef GNU_RUNTIME
@@ -10,7 +9,7 @@
 	/* Implementation for MacOS X */
 
 PyObject*
-ObjC_GetClassList(void)
+PyObjC_GetClassList(void)
 {
 	PyObject* 	result = NULL;
 	Class*		buffer = NULL;
@@ -18,15 +17,42 @@ ObjC_GetClassList(void)
 	int		neededLen = 0;
 	int             i;
 
+	/*
+	 * objc_getClassList returns the number of classes known in the runtime,
+	 * the documented way to fetch the list is:
+	 * 1. call ret = objc_getClassList(NULL, 0);
+	 * 2. allocate a buffer of 'ret' class-pointers
+	 * 3. call objc_getClassList again with this buffer.
+	 *
+	 * Step 3 might return more classes because another thread may have 
+	 * loaded a new framework/bundle. This means we need a loop to be sure
+	 * we'll get all classes.
+	 *
+	 * We cheat a little for addition speed: our initial call uses a 
+	 * fairly large static buffer, this way we need only one call unless
+	 * there is a very large number of classes.
+	 */
 	neededLen = objc_getClassList(NULL, 0);
+	bufferLen = 0;
+	buffer = NULL;
+
 	while (bufferLen < neededLen) {
 		Class*    newBuffer;
 		bufferLen = neededLen;
-		newBuffer = realloc(buffer, sizeof(Class) * bufferLen);
+
+		/* Realloc(NULL, ...) might not work, call Malloc when
+		 * the buffer is NULL.
+		 */
+		if (buffer == NULL) {
+			newBuffer = PyMem_Malloc(
+				sizeof(Class) * bufferLen);
+		} else {
+			newBuffer = PyMem_Realloc(buffer, 
+				sizeof(Class) * bufferLen);
+		}
 		if (newBuffer == NULL) {
-			PyErr_SetString(PyExc_MemoryError, 
-				"ObjC_GetClassList");
-			goto error_cleanup;
+			PyErr_NoMemory();
+			goto error;
 		}
 		buffer = newBuffer; newBuffer = NULL;
 		neededLen = objc_getClassList(buffer, bufferLen);
@@ -35,71 +61,63 @@ ObjC_GetClassList(void)
 
 	result = PyTuple_New(bufferLen);
 	if (result == NULL) {
-		goto error_cleanup;
+		goto error;
 	}
 
 	for (i = 0; i < bufferLen; i++) {
 		PyObject* pyclass;
 
-		pyclass = ObjCClass_New(buffer[i]);
+		pyclass = PyObjCClass_New(buffer[i]);
 		if (pyclass == NULL) {
-			goto error_cleanup;
+			goto error;
 		}
-		if (PyTuple_SET_ITEM(result, i, pyclass) < 0) {
-			Py_DECREF(pyclass);
-			goto error_cleanup;
-		}
+		PyTuple_SET_ITEM(result, i, pyclass);
 	}
 
-	free(buffer); buffer = NULL;
+	PyMem_Free(buffer); buffer = NULL;
+
 	return result;
 
-error_cleanup:
-	if (buffer) {
-		free(buffer);
+error:
+	if (buffer != NULL) {
+		PyMem_Free(buffer);
 		buffer = NULL;
 	}
-	if (result) {
-		Py_DECREF(result);
-		result = NULL;
-	}
+	Py_XDECREF(result);
 	return NULL;
 }
 
 #else	 /* GNU_RUNTIME */
 
-	/* This is completely untested (it will probably not compile either,
-	 * I don't have access to a machine with the GNU runtime)
-	 */
+	/* Implementation for the GNU runtime (e.g. GNUstep) */
 
 PyObject*
-ObjC_GetClassList(void)
+PyObjC_GetClassList(void)
 {
 	PyObject* 	result = NULL;
 	Class		classid;
 	void*	        state = NULL;
+	int             len = 0;
+	int             i;
 
-	result = PyList_New(0);
-	while (classid = objc_next_class(&state)) {
-		PyObject* pyclass = ObjCClass_New(classid);
-		if (pyclass == NULL) {
-			goto error_cleanup;
-		}
-		if (PyList_Append(result, pyclass) < 0) {
-			Py_DECREF(pyclass);
-			goto error_cleanup;
-		}
-		Py_DECREF(pyclass);
+	while ((classid = objc_next_class(&state))) len++;
+
+	result = PyTuple_New(len);
+
+	state = NULL; i = 0;
+
+	while ((i < len) && (classid = objc_next_class(&state))) {
+		PyObject* pyclass = PyObjCClass_New(classid);
+		if (pyclass == NULL) goto error;
+
+		PyTuple_SET_ITEM(result, i, pyclass);
+		i++;
 	}
 
 	return result;
 
-error_cleanup:
-	return NULL;
-	if (result) {
-		Py_DECREF(result);
-		result = NULL;
-	}
+error:
+	Py_XDECREF(result);
 	return NULL;
 }
 

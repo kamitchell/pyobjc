@@ -1,4 +1,5 @@
 /* Copyright (c) 1996,97,98 by Lele Gaifax.  All Rights Reserved
+ * Copyright (c) 2002, 2003 Ronald Oussoren
  *
  * This software may be used and distributed freely for any purpose
  * provided that this notice is included unchanged on any and all
@@ -14,1447 +15,1617 @@
  * Created Tue Sep 10 14:16:02 1996.
  */
 
-#include "objc_support.h"
 #include "pyobjc.h"
+#include <objc/Protocol.h>
+
 #include <unistd.h>
-// #include "myctype.h"
 
-#import <Foundation/NSInvocation.h>      /* sdm7g - changed #include to #import */
-#import <Foundation/NSMethodSignature.h> /* sdm7g */
+
+#ifdef MACOSX
+/* OSX 10.1 doesn't define LLONG_MIN, LLONG_MAX and ULLONG_MAX */
+#ifndef LLONG_MIN
+#error "Mac OS X 10.1 not supported"
+#endif
+#endif
+
+#import <Foundation/NSInvocation.h>
 #import <Foundation/NSData.h> 
+#import <Foundation/NSValue.h> 
+#import <Foundation/NSDecimalNumber.h> 
 
-#ifndef GNU_RUNTIME
+#ifdef MACOSX
+#include <CoreFoundation/CFNumber.h>
+#endif /* MACOSX */
+
+/*
+ * Category on NSObject to make sure that every object supports 
+ * the method  __pyobjc_PythonObject__, this helps to simplify
+ * pythonify_c_value.
+ */
+@interface NSObject (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__;
++(PyObject*)__pyobjc_PythonObject__;
+@end /* PyObjCSupport */
+
+@implementation NSObject (PyObjCSupport)
+
+-(PyObject*)__pyobjc_PythonObject__
+{
+	PyObject *rval;
+
+	rval = PyObjC_FindPythonProxy(self);
+	if (rval == NULL) {
+		rval = (PyObject *)PyObjCObject_New(self);
+		PyObjC_RegisterPythonProxy(self, rval);
+	}
+
+	return rval;
+}
+
++(PyObject*)__pyobjc_PythonObject__
+{
+	PyObject *rval;
+
+	//rval = PyObjC_FindPythonProxy(self);
+	rval = NULL;
+	if (rval == NULL) {
+		rval = (PyObject *)PyObjCClass_New(self);
+		//PyObjC_RegisterPythonProxy(self, rval);
+	}
+
+	return rval;
+}
+
+@end /* PyObjCSupport */
+
+@interface NSProxy (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__;
++(PyObject*)__pyobjc_PythonObject__;
+@end /* PyObjCSupport */
+
+@implementation NSProxy (PyObjCSupport)
+
+-(PyObject*)__pyobjc_PythonObject__
+{
+	PyObject *rval;
+
+	rval = PyObjC_FindPythonProxy(self);
+	if (rval == NULL) {
+		rval = (PyObject *)PyObjCObject_New(self);
+		PyObjC_RegisterPythonProxy(self, rval);
+	}
+	return rval;
+}
+
++(PyObject*)__pyobjc_PythonObject__
+{
+	PyObject *rval;
+
+	rval = NULL;
+	//rval = PyObjC_FindPythonProxy(self);
+	if (rval == NULL) {
+		rval = (PyObject *)PyObjCClass_New(self);
+		//PyObjC_RegisterPythonProxy(self, rval);
+	}
+	return rval;
+}
+
+@end /* PyObjCSupport */
+
+@interface Protocol (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__;
+@end /* PyObjCSupport */
+
+@implementation Protocol (PyObjCSupport)
+
+-(PyObject*)__pyobjc_PythonObject__
+{
+	PyObject *rval;
+
+	rval = PyObjC_FindPythonProxy(self);
+	if (rval == NULL) {
+		rval = PyObjCFormalProtocol_ForProtocol(self);
+	}
+	return rval;
+}
+
+@end /* PyObjCSupport */
+
+@interface Object (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__;
+@end /* PyObjCSupport */
+
+@implementation Object (PyObjCSupport)
+
+-(PyObject*)__pyobjc_PythonObject__
+{
+	PyObject *rval;
+
+	rval = PyObjC_FindPythonProxy(self);
+	if (rval == NULL) {
+		rval = (PyObject *)PyObjCObject_NewClassic(self);
+		PyObjC_RegisterPythonProxy(self, rval);
+	}
+	return rval;
+}
+
+@end /* PyObjCSupport */
+
+@interface NSString (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__;
+@end /* NSString (PyObjCSupport) */
+
+@implementation NSString (PyObjCSupport)
+
+-(PyObject*)__pyobjc_PythonObject__
+{
+	/* Don't register the proxy, see XXX */
+	PyObject *rval = (PyObject *)PyObjCUnicode_New(self);
+	return rval;
+}
+
+@end /* NSString (PyObjCSupport) */
+
+@interface NSNumber (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__;
+@end /* NSNumber (PyObjCSupport) */
+
+@implementation NSNumber (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__
+{
+	/* FIXME: rewrite PyObjC_NSNumberWrapper in C */
+	PyObject *rval;
+
+
+#ifdef MACOSX
+	/* shortcut for booleans */
+	if (kCFBooleanTrue == (CFBooleanRef)self) {
+		return PyBool_FromLong(1);
+	} else if (kCFBooleanFalse == (CFBooleanRef)self) {
+		return PyBool_FromLong(0);
+	}
+#endif
+	
+	rval = PyObjC_FindPythonProxy(self);
+	if (rval == NULL) {
+		rval= PyObjCObject_New(self);
+
+		if (PyObjC_NSNumberWrapper && rval) {
+			PyObject *val = rval;
+			rval = PyObject_CallFunctionObjArgs(
+					PyObjC_NSNumberWrapper, val, NULL);
+			Py_DECREF(val);
+		}
+	}
+	return rval;
+}
+@end
+
+@interface NSDecimalNumber (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__;
+@end /* NSDecimalNumber (PyObjCSupport) */
+
+@implementation NSDecimalNumber (PyObjCSupport)
+-(PyObject*)__pyobjc_PythonObject__
+{
+	PyObject *rval;
+
+	rval = PyObjC_FindPythonProxy(self);
+	if (rval == NULL) {
+		rval = (PyObject *)PyObjCObject_New(self);
+		PyObjC_RegisterPythonProxy(self, rval);
+	}
+
+	return rval;
+}
+@end
 
 #ifndef MAX
-#define MAX(x,y) ({ unsigned int __x=(x), __y=(y); (__x > __y ? __x : __y); })
-#define MIN(x,y) ({ unsigned int __x=(x), __y=(y); (__x < __y ? __x : __y); })
+static inline int
+MAX(int x, int y)
+{
+	return x > y ? x : y;
+}
 #endif
-static inline const int
+
+#if 0
+static inline int
 ROUND(int v, int a)
 {
-  return a * ((v+a-1)/a);
+	return a * ((v+a-1)/a);
 }
+#else
+static inline int 
+ROUND(int v, int a)
+{
+	if (v % a == 0) {
+		return v;
+	} else {
+		return v + a - (v % a);
+	}
+}
+#endif
+
+
+static inline const char*
+PyObjCRT_SkipTypeQualifiers (const char* type)
+{
+	while (
+			*type == _C_CONST ||
+			*type == _C_IN ||
+			*type == _C_INOUT ||
+			*type == _C_OUT ||
+			*type == _C_BYCOPY ||
+			*type == _C_ONEWAY) {
+		type++;
+	}
+	while (*type && isdigit(*type)) type++;
+	return type;
+}
+
 
 const char * 
-objc_skip_typespec (const char *type)
+PyObjCRT_SkipTypeSpec (const char *type)
 {
-  type = objc_skip_type_qualifiers (type);
+	type = PyObjCRT_SkipTypeQualifiers (type);
 
-  switch (*type)
-    {
-      /* The following are one character type codes */
-    case _C_ID:
+	switch (*type) {
+	/* The following are one character type codes */
+	case _C_UNDEF:
+	case _C_CLASS:
+	case _C_SEL:
+	case _C_CHR:
+	case _C_UCHR:
+	case _C_CHARPTR:
+#ifdef _C_ATOM
+	case _C_ATOM:
+#endif
+#ifdef _C_BOOL
+	case _C_BOOL:
+#endif
+	case _C_SHT:
+	case _C_USHT:
+	case _C_INT:
+	case _C_UINT:
+	case _C_LNG:
+	case _C_ULNG:
+	case _C_FLT:
+	case _C_DBL:
+	case _C_VOID:
+	case _C_LNGLNG:
+	case _C_ULNGLNG:
+	case _C_BFLD: /* Not really 1 character, but close enough  */
+		++type;
+		break;
 
-    case _C_CLASS:
-    case _C_SEL:
-    case _C_CHR:
-    case _C_UCHR:
-    case _C_CHARPTR:
-    case _C_SHT:
-    case _C_USHT:
-    case _C_INT:
-    case _C_UINT:
-    case _C_LNG:
-    case _C_ULNG:
-    case _C_FLT:
-    case _C_DBL:
-    case _C_VOID:
-      return ++type;
-      break;
+	case _C_ID:
+		++type;
+#ifdef MACOSX
+		if (*type == '"') {
+			/* embedded field name in an ivar_type */
+			type=strchr(type+1, '"');
+			if (type != NULL) {
+				type++;
+			}
+		}
+#endif
+		break;
 
-    case _C_ARY_B:
-      /* skip digits, typespec and closing ']' */
-    
-      while (isdigit (*++type));
-      type = objc_skip_typespec (type);
-      //assert (*type == _C_ARY_E);
-      return ++type;
-      break;
-      
-    case _C_STRUCT_B:
-      /* skip name, and elements until closing '}'  */
-    
-      while (*type != _C_STRUCT_E && *type++ != '=');
-      while (*type != _C_STRUCT_E)
-        type = objc_skip_typespec (type);
-      return ++type;
+	case _C_ARY_B:
+		/* skip digits, typespec and closing ']' */
 
-    case _C_UNION_B:
-      /* skip name, and elements until closing ')'  */
-      type++;
-      while (*type != _C_UNION_E) { type = objc_skip_typespec (type); }
-      return ++type;
-      
-    case _C_PTR:
-      /* Just skip the following typespec */
-      return objc_skip_typespec (++type);
-    
-    default:
-      fprintf (stderr, "objc_skip_typespec: Unhandled type '%c'\n", *type);
-      abort();
-    }
-}
-
-/*
-  Return the alignment of an object specified by type 
-*/
-
-static int
-objc_alignof_type (const char *type)
-{
-  switch (*type)
-    {
-    case _C_ID:
-      return __alignof__ (id);
-      break;
-
-    case _C_CLASS:
-      return __alignof__ (Class);
-      break;
-    
-    case _C_SEL:
-      return __alignof__ (SEL);
-      break;
-
-    case _C_CHR:
-      return __alignof__ (char);
-      break;
-    
-    case _C_UCHR:
-      return __alignof__ (unsigned char);
-      break;
-
-    case _C_SHT:
-      return __alignof__ (short);
-      break;
-
-    case _C_USHT:
-      return __alignof__ (unsigned short);
-      break;
-
-    case _C_INT:
-      return __alignof__ (int);
-      break;
-
-    case _C_UINT:
-      return __alignof__ (unsigned int);
-      break;
-
-    case _C_LNG:
-      return __alignof__ (long);
-      break;
-
-    case _C_ULNG:
-      return __alignof__ (unsigned long);
-      break;
-
-    case _C_FLT:
-      return __alignof__ (float);
-      break;
-
-    case _C_DBL:
-      return __alignof__ (double);
-      break;
-
-    case _C_CHARPTR:
-      return __alignof__ (char *);
-      break;
-
-    case _C_PTR:
-      return __alignof__ (void *);
-      break;
-      
-    case _C_ARY_B:
-      while (isdigit(*++type)) /* do nothing */;
-      return objc_alignof_type (type);
-      
-    case _C_STRUCT_B:
-      {
-        struct { int x; double y; } fooalign;
-        while(*type != _C_STRUCT_E && *type++ != '=') /* do nothing */;
-        if (*type != _C_STRUCT_E)
-          return MAX (objc_alignof_type (type), __alignof__ (fooalign));
-        else
-          return __alignof__ (fooalign);
-      }
-
-    case _C_UNION_B:
-      {
-        int maxalign = 0;
-        type++;
-        while (*type != _C_UNION_E)
-          {
-            maxalign = MAX (maxalign, objc_alignof_type (type));
-            type = objc_skip_typespec (type);
-          }
-        return maxalign;
-      }
-
-    case _C_CONST:
-    case _C_IN:
-    case _C_INOUT:
-    case _C_OUT:
-    case _C_BYCOPY:
-    case _C_ONEWAY:
-	    return objc_alignof_type(type+1);
-
-    case _C_LNGLNG:
-	    return __alignof__(long long);
-
-    case _C_ULNGLNG:
-	    return __alignof__(unsigned long long);
-    
-    default:
-      fprintf (stderr, "objc_align_type: Unhandled type '%c'\n", *type);
-      abort();
-    }
-}
-
-/*
-  The aligned size if the size rounded up to the nearest alignment.
-*/
-
-static int
-objc_aligned_size (const char *type)
-{
-  static int objc_sizeof_type (const char *type);
+		while (isdigit (*++type));
+		type = PyObjCRT_SkipTypeSpec (type);
+		assert (type == NULL || *type == _C_ARY_E);
+		if (type) type++;
+		break;
   
-  int size = objc_sizeof_type (type);
-  int align = objc_alignof_type (type);
-  return ROUND (size, align);
+	case _C_STRUCT_B:
+		/* skip name, and elements until closing '}'  */
+		while (*type != _C_STRUCT_E && *type++ != '='); 
+		while (type && *type != _C_STRUCT_E) {
+			if (*type == '"') {
+				/* embedded field names */
+				type = strchr(type+1, '"');
+				if (type != NULL) {
+					type++;
+				} else {
+					return NULL;
+				}
+			}
+			type = PyObjCRT_SkipTypeSpec (type);
+		}
+		if (type) type++;
+		break;
+
+	case _C_UNION_B:
+		/* skip name, and elements until closing ')'  */
+		while (*type != _C_UNION_E && *type++ != '='); 
+		while (type && *type != _C_UNION_E) { 
+			type = PyObjCRT_SkipTypeSpec (type); 
+		}
+		if (type) type++;
+		break;
+  
+	case _C_PTR:
+	case _C_CONST:
+	case _C_IN:
+	case _C_INOUT:
+	case _C_OUT:
+	case _C_BYCOPY:
+	case _C_ONEWAY:
+
+		/* Just skip the following typespec */
+		type = PyObjCRT_SkipTypeSpec (type+1);
+		break;
+
+
+	default:
+		PyErr_Format(PyObjCExc_InternalError,
+			"PyObjCRT_SkipTypeSpec: Unhandled type '%#x'", *type); 
+		return NULL;
+	}
+
+	/* The compiler inserts a number after the actual signature, 
+	 * this number may or may not be usefull depending on the compiler
+	 * version. We never use it.
+	 */
+	while (type && *type && isdigit(*type)) type++;
+	return type;
 }
 
 /*
-  return the size of an object specified by type 
+Return the alignment of an object specified by type 
+*/
+
+/*
+*  On MacOS X, the elements of a struct are aligned differently inside the
+*  struct than outside. That is, the maximum alignment of any struct field
+*  (except the first) is 4, doubles outside of a struct have an alignment of
+*  8.
+*
+*  Other platform don't seem to have this inconsistency.
+*  
+*  XXX: sizeof_struct, alignof_struct and {de,}pythonify_c_struct should
+*  probably be moved to platform dependend files. As long as this is the
+*  only platform dependent code this isn't worth the effort.
+*/
+#ifdef MACOSX
+
+static inline int
+PyObjC_EmbeddedAlignOfType (const char*  type)
+{
+	int align = PyObjCRT_AlignOfType(type);
+
+	if (align < 4) {
+		return align;
+	} else {
+		return 4;
+	}
+}
+
+#else
+
+static inline int
+PyObjC_EmbeddedAlignOfType (const char*  type)
+{
+	int align =  PyObjCRT_AlignOfType(type);
+
+	/* GNUstep/ix86 seems to behave like this: */
+	if (align < 4) {
+		return align;
+	} else {
+		return 4;
+	}
+}
+
+#endif
+
+int
+PyObjCRT_AlignOfType (const char *type)
+{
+	switch (*type) {
+	case _C_ID:    return __alignof__ (id);
+	case _C_CLASS: return __alignof__ (Class);
+	case _C_SEL:   return __alignof__ (SEL);
+	case _C_CHR:   return __alignof__ (char);
+	case _C_UCHR:  return __alignof__ (unsigned char);
+	case _C_SHT:   return __alignof__ (short);
+	case _C_USHT:  return __alignof__ (unsigned short);
+#ifdef _C_BOOL
+	case _C_BOOL:   return __alignof__ (bool);
+#endif
+	case _C_INT:   return __alignof__ (int);
+	case _C_UINT:  return __alignof__ (unsigned int);
+	case _C_LNG:   return __alignof__ (long);
+	case _C_ULNG:  return __alignof__ (unsigned long);
+	case _C_FLT:   return __alignof__ (float);
+	case _C_DBL:   return __alignof__ (double);
+	case _C_CHARPTR: return __alignof__ (char *);
+#ifdef _C_ATOM
+	case _C_ATOM: return __alignof__ (char *);
+#endif
+	case _C_PTR:   return __alignof__ (void *);
+	case _C_LNGLNG: return __alignof__(long long);
+	case _C_ULNGLNG: return __alignof__(unsigned long long);
+
+	case _C_ARY_B:
+		while (isdigit(*++type)) /* do nothing */;
+		return PyObjCRT_AlignOfType (type);
+  
+	case _C_STRUCT_B:
+	{
+		/* The alignment of a struct is the alignment of it's first
+		 * member
+		 */
+
+		struct { int x; double y; } fooalign;
+		while(*type != _C_STRUCT_E && *type++ != '=') /* do nothing */;
+		if (*type != _C_STRUCT_E) {
+			int have_align = 0;
+			int align = 0;
+
+			while (type != NULL && *type != _C_STRUCT_E) {
+				if (*type == '"') {
+					type = strchr(type+1, '"');
+					if (type) type++;
+				}
+				if (have_align) {
+					align = MAX(align, 
+					   PyObjC_EmbeddedAlignOfType(type));
+				} else {
+					align = PyObjCRT_AlignOfType(type);
+					have_align = 1;
+				}
+				type = PyObjCRT_SkipTypeSpec(type);
+			}
+			if (type == NULL) return -1;
+			return align;
+		} else {
+			return __alignof__ (fooalign);
+		}
+	}
+
+	case _C_UNION_B:
+	{
+		int maxalign = 0;
+		type++;
+		while (*type != _C_UNION_E)
+		{
+			int item_align = PyObjCRT_AlignOfType(type);
+			if (item_align == -1) return -1;
+			maxalign = MAX (maxalign, item_align);
+			type = PyObjCRT_SkipTypeSpec (type);
+		}
+		return maxalign;
+	}
+
+	case _C_CONST:
+	case _C_IN:
+	case _C_INOUT:
+	case _C_OUT:
+	case _C_BYCOPY:
+	case _C_ONEWAY:
+		return PyObjCRT_AlignOfType(type+1);
+
+	default:
+		PyErr_Format(PyObjCExc_InternalError, 
+			"PyObjCRT_AlignOfType: Unhandled type '%#x'", *type);
+		return -1;
+	}
+}
+
+/*
+The aligned size if the size rounded up to the nearest alignment.
+*/
+
+static int
+PyObjCRT_AlignedSize (const char *type)
+{
+	int size = PyObjCRT_SizeOfType (type);
+	int align = PyObjCRT_AlignOfType (type);
+
+	if (size == -1 || align == -1) return -1;
+	return ROUND (size, align);
+}
+
+/*
+return the size of an object specified by type 
 */
 
 int
-objc_sizeof_type (const char *type)
+PyObjCRT_SizeOfType (const char *type)
 {
-  switch (*type)
-    {
-    case _C_VOID:
-      return 0;
-      
-    case _C_ID:
-      return sizeof(id);
-      break;
-      
-    case _C_CLASS:
-      return sizeof(Class);
-      break;
-      
-    case _C_SEL:
-      return sizeof(SEL);
-      break;
-      
-    case _C_CHR:
-      return sizeof(char);
-      break;
-      
-    case _C_UCHR:
-      return sizeof(unsigned char);
-      break;
-      
-    case _C_SHT:
-      return sizeof(short);
-      break;
-      
-    case _C_USHT:
-      return sizeof(unsigned short);
-      break;
-      
-    case _C_INT:
-      return sizeof(int);
-      break;
-      
-    case _C_UINT:
-      return sizeof(unsigned int);
-      break;
-      
-    case _C_LNG:
-      return sizeof(long);
-      break;
-      
-    case _C_ULNG:
-      return sizeof(unsigned long);
-      break;
-      
-    case _C_FLT:
-      return sizeof(float);
-      break;
-      
-    case _C_DBL:
-      return sizeof(double);
-      break;
-      
-    case _C_PTR:
-    case _C_CHARPTR:
-      return sizeof(char*);
-      break;
-      
-    case _C_ARY_B:
-      {
-        int len = atoi(type+1);
-        while (isdigit(*++type));
-        return len*objc_aligned_size (type);
-      }
-    break; 
-    
-    case _C_STRUCT_B:
-      {
-        int acc_size = 0;
-        int align;
-        while (*type != _C_STRUCT_E && *type++ != '='); /* skip "<name>=" */
-        while (*type != _C_STRUCT_E)
-          {
-            align = objc_alignof_type (type);       /* padd to alignment */
-            acc_size = ROUND (acc_size, align);
-            acc_size += objc_sizeof_type (type);   /* add component size */
-            type = objc_skip_typespec (type);            /* skip component */
-          }
-        return acc_size;
-      }
-    
-    case _C_UNION_B:
-      {
-        int max_size = 0;
-        type++;
-        while (*type != _C_UNION_E)
-          {
-            max_size = MAX (max_size, objc_sizeof_type (type));
-            type = objc_skip_typespec (type);
-          }
-        return max_size;
-      }
+	int itemSize;
+	switch (*type) {
+	case _C_VOID:    return 0;
+	case _C_ID:      return sizeof(id);
+	case _C_CLASS:   return sizeof(Class);
+	case _C_SEL:     return sizeof(SEL);
+	case _C_CHR:     return sizeof(char);
+	case _C_UCHR:    return sizeof(unsigned char);
+	case _C_SHT:     return sizeof(short);
+	case _C_USHT:    return sizeof(unsigned short);
+#ifdef _C_BOOL
+	case _C_BOOL:    return sizeof(bool);
+#endif
+	case _C_INT:     return sizeof(int);
+	case _C_UINT:    return sizeof(unsigned int);
+	case _C_LNG:     return sizeof(long);
+	case _C_ULNG:    return sizeof(unsigned long);
+	case _C_FLT:     return sizeof(float);
+	case _C_DBL:     return sizeof(double);
+	case _C_LNGLNG:  return sizeof(long long);
+	case _C_ULNGLNG: return sizeof(unsigned long long);
 
-    case _C_CONST:
-    case _C_IN:
-    case _C_INOUT:
-    case _C_OUT:
-    case _C_BYCOPY:
-    case _C_ONEWAY:
-	    return objc_sizeof_type(type+1);
+	case _C_PTR:
+	case _C_CHARPTR:
+#ifdef _C_ATOM
+	case _C_ATOM:
+#endif
+		return sizeof(char*);
+  
+	case _C_ARY_B:
+	{
+		int len = atoi(type+1);
+		int item_align;
+		while (isdigit(*++type))
+			;
+		item_align = PyObjCRT_AlignedSize(type);
+		if (item_align == -1) return -1;
+		return len*item_align;
+	}
+	break; 
 
-    case _C_LNGLNG:
-	    return sizeof(long long);
+	case _C_STRUCT_B:
+	{
+		int acc_size = 0;
+		int have_align =  0;
+		int align;
+		int max_align = 0;
 
-    case _C_ULNGLNG:
-	    return sizeof(unsigned long long);
+		while (*type != _C_STRUCT_E && *type++ != '=')
+			; /* skip "<name>=" */
+		while (*type != _C_STRUCT_E) {
+			if (*type == '"') {
+				type = strchr(type+1, '"');
+				if (type) type++;
+			}
+			if (have_align) {
+				align = PyObjC_EmbeddedAlignOfType(type);
+				if (align == -1) return -1;
+			} else {
+				align = PyObjCRT_AlignOfType(type);
+				if (align == -1) return -1;
+				have_align = 1;
+			}
+			max_align = MAX(align, max_align);
+			acc_size = ROUND (acc_size, align);
 
-    default:
-      fprintf (stderr, "objc_sizeof_type: Unhandled type '%c'\n", *type);
-      abort();
-    }
+			itemSize = PyObjCRT_SizeOfType (type); 
+			if (itemSize == -1) return -1;
+			acc_size += itemSize;
+			type = PyObjCRT_SkipTypeSpec (type);
+		}
+		if (max_align) {
+			acc_size = ROUND(acc_size, max_align);
+		}
+		return acc_size;
+	}
+
+	case _C_UNION_B:
+	{
+		int max_size = 0;
+		type++;
+		while (*type != _C_UNION_E) {
+			itemSize = PyObjCRT_SizeOfType (type);
+			if (itemSize == -1) return -1;
+			max_size = MAX (max_size, itemSize);
+			type = PyObjCRT_SkipTypeSpec (type);
+		}
+		return max_size;
+	}
+
+	case _C_CONST:
+	case _C_IN:
+	case _C_INOUT:
+	case _C_OUT:
+	case _C_BYCOPY:
+	case _C_ONEWAY:
+		return PyObjCRT_SizeOfType(type+1);
+
+	default:
+		PyErr_Format(PyObjCExc_InternalError, 
+			"PyObjCRT_SizeOfType: Unhandled type '%#x", *type);
+		return -1;
+	}
 }
 
-#endif
 
 /*#F Returns a tuple of objects representing the content of a C array
-  of type @var{type} pointed by @var{datum}. */
+of type @var{type} pointed by @var{datum}. */
 static PyObject *
 pythonify_c_array (const char *type, void *datum)
 {
-  PyObject *ret;
-  unsigned int nitems, offset, itemidx, sizeofitem;
-  
-  nitems = atoi (type+1);
-  while (isdigit (*++type));
-  sizeofitem = objc_sizeof_type (type);
+	PyObject *ret;
+	int nitems, itemidx, sizeofitem;
+	unsigned char* curdatum;
 
-  ret = PyTuple_New (nitems);
-  if (!ret)
-    return NULL;
+	nitems = atoi (type+1);
+	while (isdigit (*++type))
+		;
+	sizeofitem = PyObjCRT_SizeOfType (type);
+	if (sizeofitem == -1) return NULL;
 
-  for (offset=itemidx=0; itemidx < nitems; itemidx++)
-    {
-      PyObject *pyitem = NULL;
+	ret = PyTuple_New (nitems);
+	if (!ret) return NULL;
 
-      pyitem = pythonify_c_value (type, datum+offset);
+	curdatum = datum;
+	for (itemidx=0; itemidx < nitems; itemidx++) {
+		PyObject *pyitem = NULL;
 
-      if (pyitem)
-        PyTuple_SET_ITEM (ret, itemidx, pyitem);
-      else
-        {
-          Py_DECREF(ret);
-          return NULL;
-        }
+		pyitem = pythonify_c_value (type, curdatum);
 
-      offset += sizeofitem;
-    }
-  
-  return ret;
+		if (pyitem) {
+			PyTuple_SET_ITEM (ret, itemidx, pyitem);
+		} else {
+			Py_DECREF(ret);
+			return NULL;
+		}
+
+		curdatum += sizeofitem;
+	}
+
+	return ret;
 }
 
 /*#F Returns a tuple of objects representing the content of a C structure
-  of type @var{type} pointed by @var{datum}. */
+of type @var{type} pointed by @var{datum}. */
 static PyObject *
 pythonify_c_struct (const char *type, void *datum)
 {
-  PyObject *ret;
-  unsigned int nitems, offset, itemidx;
-  const char *item;
+	PyObject *ret;
+	PyObject *converted;
+	unsigned int offset, itemidx;
+	const char *item;
+	int have_align = 0, align;
+	int haveTuple;
+	const char* type_start = type;
+	const char* type_end = PyObjCRT_SkipTypeSpec(type);
 
-  while (*type != _C_STRUCT_E && *type++ != '='); /* skip "<name>=" */
-  for (item=type, nitems=0; *item != _C_STRUCT_E; item = objc_skip_typespec (item))
-    nitems++;
+	const char* type_real_start = type;
+	int type_real_length = type_end - type_start;
 
-  ret = PyTuple_New (nitems);
-  if (!ret)
-    return NULL;
+	/* The compiler adds useless digits at the end of the signature */
+	while (type_end != type_start+1 && type_end[-1] != _C_STRUCT_E) {
+		type_end--;
+	}
 
-  for (item=type, offset=itemidx=0; *item != _C_STRUCT_E; item = objc_skip_typespec (item))
-    {
-      PyObject *pyitem;
+	while (*type != _C_STRUCT_E && *type++ != '=') {
+		/* skip "<name>=" */
+	}
 
-      pyitem = pythonify_c_value (item, datum+offset);
+	haveTuple = 0;
+	ret = PyObjC_CreateRegisteredStruct(type_start, type_end-type_start);
+	if (ret == NULL) {
+		int nitems;
 
-      if (pyitem)
-        {
-          PyTuple_SET_ITEM (ret, itemidx, pyitem);
-        }
-      else
-        {
-          Py_DECREF(ret);
-          return NULL;
-        }
+		nitems = 0;
+		item = type;
+		while (*item != _C_STRUCT_E) {
+			nitems ++;
+			if (*item == '"') {
+				item = strchr(item+1, '"');
+				if (item) item ++;
+			}
+			item = PyObjCRT_SkipTypeSpec(item);
+		}
 
-      itemidx++;
-      offset += objc_sizeof_type (item);
-    }
-  
-  return ret;
+		haveTuple = 1;
+		ret = PyTuple_New (nitems);
+		if (!ret) return NULL;
+	}
+
+	item = type;
+	offset = itemidx = 0;
+	while (*item != _C_STRUCT_E) {
+		PyObject *pyitem;
+
+		if (*item == '"') {
+			item = strchr(item+1, '"');
+			if (item) item ++;
+		}
+
+		if (!have_align) {
+			align = PyObjCRT_AlignOfType(item);
+			have_align = 1;
+		} else {
+			align = PyObjC_EmbeddedAlignOfType(item);
+		}
+
+		offset = ROUND(offset, align);
+
+		pyitem = pythonify_c_value (item, ((char*)datum)+offset);
+
+		if (pyitem) {
+			if (haveTuple) {
+				PyTuple_SET_ITEM (ret, itemidx, pyitem);
+			} else {
+				int r;
+				r = PySequence_SetItem(ret, itemidx, pyitem);
+				Py_DECREF(pyitem);
+				if (r == -1) {
+					Py_DECREF(ret);
+					return NULL;
+				}
+			}
+		} else {
+			Py_DECREF(ret);
+			return NULL;
+		}
+
+		itemidx++;
+		offset += PyObjCRT_SizeOfType (item);
+		item = PyObjCRT_SkipTypeSpec (item);
+	}
+
+	converted = [OC_PythonObject __pythonifyStruct:ret withType:type_real_start length:type_real_length];
+	Py_DECREF(ret);
+	return converted;
 }
 
 /*#F Extracts the elements from the tuple @var{arg} and fills a C array
-  of type @var{type} pointed by @var{datum}. Returns an error message, or
-  NULL on success. */
-static const char *
+of type @var{type} pointed by @var{datum}. Returns an error message, or
+NULL on success. */
+static int
 depythonify_c_array (const char *type, PyObject *arg, void *datum)
 {
-  unsigned int nitems, offset, itemidx, sizeofitem;
+	int nitems, itemidx, sizeofitem;
+	unsigned char* curdatum;
+	PyObject* seq;
 
-  nitems = atoi (type+1);
-  while (isdigit (*++type));
-  sizeofitem = objc_sizeof_type (type);
+	nitems = atoi (type+1);
+	while (isdigit (*++type))
+		;
+	sizeofitem = PyObjCRT_AlignedSize (type);
+	if (sizeofitem == -1) {
+		PyErr_Format(PyExc_ValueError, 
+			"cannot depythonify array of unknown type");
+		return -1;
+	}
 
-  if (nitems != PyTuple_Size (arg))
-    {
-#define ERRMSG "a tuple of %d items, got one of %d"
-      static char errmsg[sizeof ERRMSG + 4];
+	seq = PySequence_Fast(arg, "depythonifying array, got no sequence");
+	if (seq == NULL) {
+		return -1;
+	}
 
-      sprintf (errmsg, ERRMSG, nitems, PyTuple_Size (arg));
-      return errmsg;
-#undef ERRMSG
-    }
+	if (nitems != PySequence_Fast_GET_SIZE(seq)) {
+		Py_DECREF(seq);
+		PyErr_Format(PyExc_ValueError,
+			"depythonifying array of %d items, got one of %d",
+			nitems, PyTuple_Size(arg));
+		return -1;
+	}
 
-  for (offset=itemidx=0; itemidx < nitems; itemidx++)
-    {
-      PyObject *pyarg = PyTuple_GetItem (arg, itemidx);
-      const char *error;
+	curdatum = datum;
+	for (itemidx=0; itemidx < nitems; itemidx++) {
+		PyObject *pyarg = PySequence_Fast_GET_ITEM(seq, itemidx);
+		int err;
 
-      error = depythonify_c_value (type, pyarg, datum+offset);
-      if (error)
-        return error;
-      
-      offset += sizeofitem;
-    }
+		err = depythonify_c_value (type, pyarg, curdatum);
+		if (err == -1) {
+			Py_DECREF(seq);
+			return err;
+		}
+	  
+		curdatum += sizeofitem;
+	}
 
-  return NULL;
+	Py_DECREF(seq);
+	return 0;
 }
 
 /*#F Extracts the elements from the tuple @var{arg} and fills a C structure
-  of type @var{type} pointed by @var{datum}. Returns an error message, or
-  NULL on success. */
-static const char *
-depythonify_c_struct (const char *types, PyObject *arg, void *datum)
+of type @var{type} pointed by @var{datum}. Returns an error message, or
+NULL on success. */
+static int
+depythonify_c_struct(const char *types, PyObject *arg, void *datum)
 {
-  unsigned int nitems, offset, itemidx;
-  const char *type;
+	int nitems, offset, itemidx;
+	int have_align = 0, align;
+	const char *type;
+	PyObject* seq;
 
-  while (*types != _C_STRUCT_E && *types++ != '='); /* skip "<name>=" */
-  for (type=types, nitems=0; *type != _C_STRUCT_E; type = objc_skip_typespec (type))
-    nitems++;
+	while (*types != _C_STRUCT_E && *types++ != '='); /* skip "<name>=" */
 
-  if (nitems != PyTuple_Size (arg))
-    {
-#define ERRMSG "a tuple of %d items, got one of %d"
-      static char errmsg[sizeof ERRMSG + 4];
+	type=types;
+	nitems=0;
+	while (*type != _C_STRUCT_E) {
+		if (*type == '"') {
+			type = strchr(type+1, '"');
+			type++;
+		}
+		nitems++;
+		type = PyObjCRT_SkipTypeSpec (type);
+	}
 
-      sprintf (errmsg, ERRMSG, nitems, PyTuple_Size (arg));
-      return errmsg;
-#undef ERRMSG
-    }
+	seq = PySequence_Fast(arg, "depythonifying struct, got no sequence");
+	if (seq == NULL) {
+		return -1;
+	}
 
-  for (type=types, offset=itemidx=0; *type != _C_STRUCT_E; type = objc_skip_typespec (type))
-    {
-      PyObject *argument = PyTuple_GetItem (arg, itemidx);
-      const char *error;
+	if (nitems != PySequence_Fast_GET_SIZE(seq)) {
+		Py_DECREF(seq);
+		PyErr_Format(PyExc_ValueError,
+			"depythonifying struct of %d members, got tuple of %d",
+			nitems, PyTuple_Size (arg));
+		return -1;
+	}
 
-      error = depythonify_c_value (type, argument, datum+offset);
-      if (error)
-        return error;
-      
-      itemidx++;
-      offset += objc_sizeof_type (type);
-    }
-  return NULL;
+	type=types;
+	offset = itemidx = 0;
+
+	while (*type != _C_STRUCT_E) {
+		PyObject *argument;
+
+		if (*type == '"') {
+			type = strchr(type+1, '"');
+			type++;
+		}
+
+
+		argument = PySequence_Fast_GET_ITEM(seq, itemidx);
+		int error;
+		if (!have_align) {
+			align = PyObjCRT_AlignOfType(type);
+			have_align = 1;
+		} else {
+			align = PyObjC_EmbeddedAlignOfType(type);
+		}
+
+		offset = ROUND(offset, align);
+
+		error = depythonify_c_value(type, argument, 
+				((char*)datum)+offset);
+		if (error == -1) {
+			Py_DECREF(seq);
+			return error;
+		}
+  
+		itemidx++;
+		offset += PyObjCRT_SizeOfType (type);
+		type = PyObjCRT_SkipTypeSpec (type);
+	}
+	Py_DECREF(seq);
+	return 0;
 }
 
 PyObject *
 pythonify_c_value (const char *type, void *datum)
 {
-  PyObject *retobject = NULL;
+	PyObject *retobject = NULL;
 
-  type = objc_skip_type_qualifiers (type);
+	type = PyObjCRT_SkipTypeQualifiers (type);
 
-  switch (*type)
-    {
-    case _C_LNGLNG: case _C_ULNGLNG:
-      retobject = (PyObject*) PyLong_FromLongLong(*(long long*)datum);
-      break;
+	switch (*type) {
+	case _C_CHR:
+		/* 
+		 * We don't return a string because BOOL is an alias for
+		 * char (at least on MacOS X)
+		 */
+		retobject = (PyObject*)PyInt_FromLong ((int)(*(char*)datum));
+		break;
 
-    case _C_CHR:
-    case _C_UCHR:
-      retobject = (PyObject *) PyInt_FromLong ((int) (*(char *) datum));
-      break;
+	case _C_UCHR:
+		retobject = (PyObject*)PyInt_FromLong (
+			(long)(*(unsigned char*)datum));
+		break;
 
-    case _C_CHARPTR:
-      {
-        char *cp = *(char **) datum;
-
-        if (! cp)
-          cp = "(null pointer)"; /* XXX */
-        retobject = (PyObject *) PyString_FromString (cp);
-        break;
-      }
-
-    case _C_INT:
-    case _C_UINT:
-      retobject = (PyObject *) PyInt_FromLong (*(int *) datum);
-      break;
-
-    case _C_SHT:
-    case _C_USHT:
-      retobject = (PyObject *) PyInt_FromLong (*(short *) datum);
-      break;
-
-    case _C_LNG:
-    case _C_ULNG:
-      retobject = (PyObject *) PyInt_FromLong (*(long *) datum);
-      break;
-
-    case _C_FLT:
-      retobject = (PyObject *) PyFloat_FromDouble (*(float *) datum);
-      break;
-
-    case _C_DBL:
-      retobject = (PyObject *) PyFloat_FromDouble (*(double *) datum);
-      break;
-      
-    case _C_ID:
-    {
-      id obj = *(id *) datum;
-
-      if (obj == nil)
-      {
-        retobject = Py_None;
-        Py_INCREF (retobject);
-      }
-      else
-      {
-        if ([obj isKindOfClass:[OC_PythonArray class]])
-        {
-          retobject = [(OC_PythonArray *)obj pyObject];
-          Py_INCREF(retobject);
-        }
-        else if ([obj isKindOfClass:[OC_PythonDictionary class]])
-        {
-          retobject = [(OC_PythonDictionary *)obj pyObject];
-          Py_INCREF(retobject);
-        }
-        else if ([obj isKindOfClass:[NSString class]])
-        {
-          /* All string classes seem to be subclasses of NSString.
-          * We convert to a python string where possible, and a python
-          * unicode object otherwise.
-          * XXX: are we too smart here?
-          */
-          NSData* data = [(NSString*)obj dataUsingEncoding:NSASCIIStringEncoding];
-          if (data == NULL) {
-            const char* utf8 = [(NSString*)obj UTF8String];
-
-            retobject = PyUnicode_DecodeUTF8(utf8, strlen(utf8), "strict");
-          } else {
-            retobject = PyString_FromStringAndSize(
-                                                   [data bytes], [data length]);
-          }
-        }
-        else if ([obj conformsToProtocol:@protocol (PythonObject)])
-        {
-          retobject = [(OC_PythonObject *) obj pyObject];
-          Py_INCREF(retobject);
-        }
-
-        else if (ObjC_HasPythonImplementation(obj))
-        {
-          retobject =  ObjC_GetPythonImplementation(obj);
-          Py_INCREF(retobject);
-        }
-        else
-        {
-          retobject = (PyObject *) ObjCObject_New (obj);
-        }
-      }
-      break;
-    }
-
-    case _C_SEL:
-	/* Ronald: We don't have a seperate type for methods that are not 
-	 * bound to a class, may need to add this, but using strings probably
-	 * works just as well.
-	 */
-#if 0
-      retobject = (PyObject *) ObjCMethod_new_with_selector (NULL,
-                                                             *(SEL *) datum);
-#else
-      retobject = PyString_FromString(SELNAME(*(SEL*)datum));
+	case _C_CHARPTR: 
+#ifdef _C_ATOM
+	case _C_ATOM:
 #endif
-
-      break;
-
-    case _C_CLASS:
-      {
-        Class c = *(Class *) datum;
-
-        if (c == Nil)
-          {
-            retobject = Py_None;
-            Py_INCREF (retobject);
-          }
-        else
-          retobject = (PyObject *) ObjCClass_New(c);
-        break;
-      }
-
-    case _C_PTR:
-      retobject = (PyObject *) ObjCPointer_new (*(void **) datum, type+1);
-      break;
-      
-    case _C_UNION_B:
-      {
-        unsigned int size = objc_sizeof_type (type);
-        retobject = PyString_FromStringAndSize ((void*)datum, size);
-        break;
-      }
-    
-    case _C_STRUCT_B:
-      retobject = pythonify_c_struct (type, datum);
-      break;
-
-    case _C_ARY_B:
-      retobject = pythonify_c_array (type, datum);
-      break;
-
-    case _C_VOID:
-      retobject = Py_None;
-      Py_INCREF (retobject);
-      break;
-
-    default:
-	ObjCErr_Set(objc_error, 
-		"pythonify_c_value: unhandled value type (%c|%d|%s)",
-		*type, *type, *type);
-        break;
-    }
-
-  return retobject;
-}
-
-#if 0 /* def OBJC_WITH_ARGUMENTS_ARENA */
- /* Ronald: The arguments arena is not the right way (tm) to deal with
-  * pointer arguments. You'll have to have additional knowlegde about a pointer
-  * to know how to deal with it.
-  *
-  * For now we try to do without support for _C_PTR in this file, except for
-  * special support in 'execute_and_pythonify_objc_method'. Datastructures
-  * containing pointers require custom C code for now.
-  */
-
-#ifdef WITH_THREAD
-#warning Does not support multiple threads yet.
-#endif
-
-/* This is used as an array of pointers: both the memory for the array
-   and that for each array's slot is dynamically allocated with malloc().
-   We use it when we have to give an ObjC method a pointer to some datum:
-   since from the Python point of view we always work on values, not pointers,
-   when an ObjC does actually want a pointer, we allocate memory in the
-   next free slot (eventually growing the array), depythonify the argument
-   in that space and feed it to the method.
-   On the next method call this space will be freed. */
-
-void **arguments_arena;
-
-/* Count of used slots in arguments_arena. */
-static unsigned int arguments_arena_current_count;
-
-/* Total number of slots in arguments_arena. */
-static unsigned int arguments_arena_slots;
-
-static inline void
-xfree (void *ptr)
-{
-  if (ptr)
-    free (ptr);
-}
-
-static inline void *
-xmalloc (unsigned int size)
-{
-  void *ptr = malloc (size);
-
-  if (ptr == 0)
-    {
-#define ERRMSG "xmalloc: memory exausted"
-      write (fileno (stderr), ERRMSG, sizeof (ERRMSG)-1);
-      exit (1);
-#undef ERRMSG
-    }
-  return ptr;
-}
-
-static inline void *
-xrealloc (void *ptr, unsigned int size)
-{
-  if (ptr == 0)
-    return xmalloc (size);
-  ptr = realloc (ptr, size);
-  if (ptr == 0)
-    {
-#define ERRMSG "xrealloc: memory exausted"
-      write (fileno (stderr), ERRMSG, sizeof (ERRMSG)-1);
-      exit (1);
-#undef ERRMSG
-    }
-  return ptr;
-}
-
-/* If the arena is not empty, free it. Then initialize counters. */
-static inline void
-initialize_arguments_arena(void)
-{
-  if (arguments_arena)
-    {
-      while (arguments_arena_current_count--)
-        xfree (arguments_arena[arguments_arena_current_count]);
-
-      xfree (arguments_arena);
-    }
-  arguments_arena_current_count = arguments_arena_slots = 0;
-  arguments_arena = NULL;
-}
-
-/* Calculates the space needed to keep a value of type TYPE, then if
-   the arena isn't big enough reallocates a bigger array for it;
-   allocates the needed amount of memory for the value recording
-   its address in the next free slot and returns that pointer. */ 
-static void *
-get_space_on_arena_for_type (const char *type)
-{
-  unsigned int needed = objc_sizeof_type (type);
-  
-  if (arguments_arena_current_count == arguments_arena_slots)
-    {
-      if (arguments_arena_slots)
-        arguments_arena_slots *= 2;
-      else
-        arguments_arena_slots = 2;
-      arguments_arena = xrealloc (arguments_arena,
-                                  arguments_arena_slots * sizeof (arguments_arena[0]));
-    }
-  return arguments_arena[arguments_arena_current_count++] = xmalloc (needed);
-}
-
-#endif /* OBJC_WITH_ARGUMENTS_ARENA */
-
-const char *
-depythonify_c_value (const char *type, PyObject *argument, void *datum)
-{
-  const char *error = NULL;
-
-  /* Pass by reference output arguments are sometimes passed a NULL pointer,
-   * this surpresses a core dump.
-   */
-  if (!datum) return error;
-
-  type = objc_skip_type_qualifiers (type);
-  
-  switch (*type)
-    {
-    case _C_LNGLNG: case _C_ULNGLNG:
-      if (PyInt_Check(argument)) {
-	      *(long long*)datum = PyInt_AsLong(argument);
-      } else if (PyLong_Check(argument)) {
-      	      if (*type == _C_LNGLNG) {
-		      *(long long*)datum = PyLong_AsLongLong(argument);
-	      } else {
-		      *(unsigned long long*)datum = PyLong_AsUnsignedLongLong(argument);
-	      }
-      }
-      break;
-    case _C_CHR:
-      if (! PyString_Check (argument) &&
-          ! PyInt_Check (argument) )
-	  {
-        error = "a string or an integer";
-	  }
-      else
-        if (PyInt_Check (argument) || PyBool_Check(argument))
-          *(char *) datum = PyInt_AsLong (argument);
-        else
-          *(char *) datum = PyString_AsString (argument)[0];
-      break;
-
-    case _C_UCHR:
-      if (! PyString_Check (argument) &&
-          ! PyInt_Check (argument) &&
-          ! PyBool_Check (argument))
-        error = "a string or an integer";
-      else
-        if (PyInt_Check (argument) || PyBool_Check(argument))
-          *(unsigned char *) datum = PyInt_AsLong (argument);
-        else
-          *(unsigned char *) datum = PyString_AsString (argument)[0];
-      break;
-
-    case _C_CHARPTR:
-      if (! PyString_Check (argument) && argument != Py_None)
-        error = "a string or None";
-      else
-        if (argument == Py_None)
-          *(char **) datum = NULL;
-        else
-          *(char **) datum = PyString_AS_STRING ((PyStringObject *) argument);
-      break;
-
-    case _C_INT:
-      if (! PyInt_Check (argument))
-        error = "an integer";
-      else
-        *(int *) datum = PyInt_AsLong (argument);
-      break;
-
-    case _C_SHT:
-      if (! PyInt_Check (argument))
-        error = "an integer";
-      else
-        *(short *) datum = PyInt_AsLong (argument);
-      break;
-
-    case _C_UINT:
-      if (! PyInt_Check (argument))
-        error = "an integer";
-      else
-        *(unsigned int *) datum = PyInt_AsLong (argument);
-      break;
-
-    case _C_USHT:
-      if (! PyInt_Check (argument))
-        error = "an integer";
-      else
-        *(unsigned short *) datum = PyInt_AsLong (argument);
-      break;
-
-    case _C_LNG:
-      if (! PyInt_Check (argument))
-        error = "an integer";
-      else
-        *(long *) datum = PyInt_AsLong (argument);
-      break;
-
-    case _C_ULNG:
-      if (! PyInt_Check (argument))
-        error = "an integer";
-      else
-        *(unsigned long *) datum = PyInt_AsLong (argument);
-      break;
-
-    case _C_ID:
-      if (argument == Py_None)
-        *(id *) datum = nil;
-      else if (ObjCClass_Check (argument))
-        *(id *) datum = (id)ObjCClass_GetClass(argument);
-      else if (ObjCObject_Check (argument)) {
-        *(id *) datum = ObjCObject_GetObject(argument);
-      } else if (PyString_Check (argument))
-        {
-	/* We should probably translate to unicode using the default python
-	 * encoding (which is ASCII and may be different from the NSString
-	 * default encoding)
-	 */
-	*(id *) datum = [NSString 
-			stringWithCString:PyString_AS_STRING(argument)
-				  length:PyString_GET_SIZE(argument)];
-	}
-      else if (PyUnicode_Check(argument)) 
 	{
-		PyObject* utf8 = PyUnicode_AsUTF8String(argument);
+		char *cp = *(char **) datum;
 
-		if (utf8) {
-			*(id *) datum = [NSString 
-				stringWithUTF8String:PyString_AS_STRING(utf8)];
-			Py_DECREF(utf8);
+		if (cp == NULL) {
+			Py_INCREF(Py_None);
+			retobject = Py_None;
 		} else {
-			error = "Cannot convert Unicode string";
+			retobject = (PyObject*)PyString_FromString(cp);
 		}
+		break;
 	}
-      else if (PyInt_Check (argument))
-	*(id *) datum = [NSNumber numberWithLong:PyInt_AS_LONG (argument)];
-      else if (PySequence_Check(argument))  
-	*(id *) datum = [OC_PythonArray newWithPythonObject:argument];
-      else if (PyMapping_Check(argument))  
-	*(id *) datum = [OC_PythonDictionary newWithPythonObject:argument];
-      else
-        *(id *) datum = [OC_PythonObject newWithObject:argument];
 
-      break;
+#ifdef _C_BOOL
+	case _C_BOOL:
+		retobject = (PyObject *) PyInt_FromLong (*(bool*) datum);
+		break;
+#endif
 
-    case _C_CLASS:
-      if (ObjCClass_Check(argument)) 
-	      *(Class*) datum = ObjCClass_GetClass(argument);
-      else if (argument == Py_None) 
-	      *(Class*) datum = nil;
-      else
-        error = "a ObjC class or None";
+	case _C_INT:
+		retobject = (PyObject *) PyInt_FromLong (*(int*) datum);
+		break;
 
-      break;
-
-    case _C_SEL:
-      if (! ObjCSelector_Check (argument) && ! PyString_Check (argument))
-        error = "a ObjC method or a string";
-      else
-        if (ObjCSelector_Check (argument))
-          *(SEL *) datum = ObjCSelector_Selector(argument); 
-        else
-          {
-            char *selname = PyString_AsString (argument);
-            SEL sel = SELUID (selname);
-
-	    if (sel) 
-	      *(SEL*) datum = sel;
-	    else
-	      error = "cannot register selector name";
-          }
-      break;
-
- 
-    case _C_PTR:
-	/* Pointers are hard and the code below
-	 * (1) Uses PyString in an unsafe way
-	 * (2) Is not threadsafe
-	 * (3) Is not needed for *most* Cocoa code
-	 *     [We should only get here for pointers inside data structures]
-	 */
-#if 0 /* def OBJC_WITH_ARGUMENTS_ARENA */
-      if (PyString_Check (argument))
-        {
-	  /* XXX: The use of PyString here is outdated! Python strings cache
-	   * their hashvalue. If this depythonified value is used as an output
-	   * parameter that cached hashvalue will most likely be incorrect. 
-	   * And then there's string interning...
-	   */
-	  if (*(type+1) != _C_VOID)
-	    {
-	      unsigned int expected_size = objc_sizeof_type (++type);
-	      
-	      if (expected_size != PyString_Size (argument))
-		{
-#define ERRMSG "a string of size %d instead of %d"
-		  static char errmsg[sizeof (ERRMSG)+6+6];
-		  
-		  sprintf (errmsg, ERRMSG, expected_size, PyString_Size (argument));
-		  error = errmsg;
-#undef ERRMSG
-		  break;
+	case _C_UINT:
+		if (*(unsigned int*)datum > LONG_MAX) {
+			retobject = (PyObject*)PyLong_FromUnsignedLongLong(
+				*(unsigned int*)datum);
+		} else {
+			retobject = (PyObject*)PyInt_FromLong (
+				*(unsigned int *) datum);
 		}
-	    }
-	  *(void **) datum = PyString_AS_STRING ((PyStringObject *) argument);
-        }
-      else if (ObjCPointer_Check (argument))
-        *(void **) datum = ((ObjCPointer *) argument)->ptr;
-      else             
-        {
-          *(void **) datum = get_space_on_arena_for_type (++type);
-          error = depythonify_c_value (type, argument, *(void **) datum);
-        }
+		break;
 
-#else /* !OBJC_WITH_ARGUMENTS_ARENA */
+	case _C_SHT:
+		retobject = (PyObject *) PyInt_FromLong (*(short *) datum);
+		break;
 
-      if (ObjCPointer_Check (argument))
-        *(void **) datum = ((ObjCPointer *) argument)->ptr;
-      else
-	error = "nested pointers unimplemented";
+	case _C_USHT:
+		retobject = (PyObject *) PyInt_FromLong (
+			*(unsigned short *) datum);
+		break;
 
-#endif /* !OBJC_WITH_ARGUMENTS_ARENA */
+	case _C_LNG:
+		retobject = (PyObject *) PyInt_FromLong (*(long *) datum);
+		break;
+
+	case _C_ULNG:
+		if (*(unsigned long*)datum > LONG_MAX) {
+			retobject = (PyObject*)PyLong_FromUnsignedLongLong(
+				*(unsigned long*)datum);
+		} else {
+			retobject = (PyObject*)PyInt_FromLong (
+				*(unsigned long*) datum);
+		}
+		break;
+
+	case _C_ULNGLNG:
+		retobject = (PyObject*)PyLong_FromUnsignedLongLong(
+			*(unsigned long long*)datum);
+		break;
+
+	case _C_LNGLNG: 
+		retobject = (PyObject*)PyLong_FromLongLong(*(long long*)datum);
+		break;
+
+	case _C_FLT:
+		retobject = (PyObject *) PyFloat_FromDouble (*(float*) datum);
+		break;
+
+	case _C_DBL:
+		retobject = (PyObject *) PyFloat_FromDouble (*(double*) datum);
+		break;
+  
+	case _C_ID:
+	{
+		id obj = *(id *) datum;
+
+#if 1
+		/* In theory this is a no-op, in practice this gives us EOF 4.5 
+		 * support.
+		 *
+		 * EOF can return references to 'to-be-restored' objects, 
+		 * calling any method on them fully restores them, 'self' is
+		 * the safest method to call.
+		 */
+		obj = [obj self];
+#endif
+
+		if (obj == nil) {
+			retobject = Py_None;
+			Py_INCREF (retobject);
+		} else {
+			retobject = [obj  __pyobjc_PythonObject__];
+		}
+		break;
+	}
+
+	case _C_SEL:
+		if (*(SEL*)datum == NULL) {
+			retobject = Py_None;
+			Py_INCREF(retobject);
+		} else {
+			retobject = PyString_FromString(PyObjCRT_SELName(*(SEL*)datum)); 
+		}
+		break;
+
+	case _C_CLASS:
+	{
+		Class c = *(Class *) datum;
+
+		if (c == Nil) {
+			retobject = Py_None;
+			Py_INCREF (retobject);
+		} else {
+			retobject = (PyObject *) PyObjCClass_New(c);
+		}
+		break;
+	}
+
+	case _C_PTR:
+		if (*(void**)datum == NULL) {
+			retobject = Py_None;
+			Py_INCREF(retobject);
+		} else {
+			retobject = PyObjCPointerWrapper_ToPython(type, datum);
+			if (retobject == NULL && !PyErr_Occurred()) {
+				retobject = (PyObject*)PyObjCPointer_New(
+					*(void**) datum, type+1);
+			}
+		}
+		break;
+  
+	case _C_UNION_B:
+	{
+		int size = PyObjCRT_SizeOfType (type);
+		if (size == -1) return NULL;
+		retobject = PyString_FromStringAndSize ((void*)datum, size);
+		break;
+	}
+
+	case _C_STRUCT_B:
+		retobject = pythonify_c_struct (type, datum);
+		break;
+
+	case _C_ARY_B:
+		retobject = pythonify_c_array (type, datum);
+		break;
+
+	case _C_VOID:
+		retobject = Py_None;
+		Py_INCREF (retobject);
+		break;
+
+	default:
+		PyErr_Format(PyObjCExc_Error, 
+			"pythonify_c_value: unhandled value type (%c|%d|%s)",
+			*type, *type, type);
+		break;
+	}
+
+	return retobject;
+}
 
 
-      break;
-
-    case _C_FLT:
-      if (PyFloat_Check (argument))
-        *(float *) datum = (float) PyFloat_AsDouble (argument);
-      else if (PyInt_Check (argument))
-        *(float *) datum = (float) PyInt_AsLong (argument);
-      else
-        error = "a float or an integer";
-      break;
-
-    case _C_DBL:
-      if (PyFloat_Check (argument))
-        *(double *) datum = PyFloat_AsDouble (argument);
-      else if (PyInt_Check (argument))
-        *(double *) datum = (double) PyInt_AsLong (argument);
-      else
-        error = "a float or an integer";
-      break;
-
-    case _C_UNION_B:
-      if (PyString_Check (argument))
-        {
-          unsigned int expected_size = objc_sizeof_type (type);
-          
-          if (expected_size != PyString_Size (argument))
-            {
-#define ERRMSG "a string of size %d instead of %d"
-              static char errmsg[sizeof (ERRMSG)+6+6];
-
-              sprintf (errmsg, ERRMSG, expected_size, PyString_Size (argument));
-              error = errmsg;
-#undef ERRMSG
-            }
-          else
-            memcpy ((void *) datum, PyString_AS_STRING ((PyStringObject *) argument), expected_size);
-        }
-      else
-        error = "a string";
-      break;
-
-    case _C_STRUCT_B:
-      if (! PyTuple_Check (argument))
-        error = "a tuple";
-      else
-        error = depythonify_c_struct (type, argument, datum);
-      break;
-
-    case _C_ARY_B:
-      if (! PyTuple_Check (argument))
-        error = "a tuple";
-      else
-        error = depythonify_c_array (type, argument, datum);
-      break;
-
-    default:
-      {
-#define ERRMSG "unhandled typespec %c"
-        static char msg[sizeof ERRMSG];
-
-        sprintf (msg, ERRMSG, *type);
-        error = msg;
-        break;
-#undef ERRMSG
-      }
-    }
-
-  return error;
+int PyObjCRT_SizeOfReturnType(const char* type)
+{
+	switch(*type) {
+	case _C_CHR:
+	case _C_UCHR:
+	case _C_SHT:
+	case _C_USHT:
+		return sizeof(int);
+	default:
+		return PyObjCRT_SizeOfType(type);
+	}
 }
 
 /*
- * This function is used to call the objective-C implementation of a method.
- * We use an NSInvocation for convenience (1).
- *
- * This method can process pass-by-reference arguments. When the signature 
- * contains specifiers for wether those arguments are in, out or inout 
- * parameters that information is used to determine wether the argument must
- * be present in the python call (in and inout) and wether the argument must 
- * be returned to the user (inout and out). If the extra information is not
- * available the argument is assumed to be an inout argument.
- *
- * TODO:
- * - Remove all references to an argument arena in the rest of this file 
- * - But: argument arena's are used for all pointers, not only for pass-by-
- *   reference arguments but also for pointers in structs/arrays/...
- * - Deal with return values that are pointers
- * - Deal with pointer arguments that are arrays (probably need to add special
- *   markup to say 'this is a pointer to X values, where X is the Yth argument')
- * - At the moment we cannot override methods with pass-by-reference arguments
- *   (stub-generator doesn't deal with those)
- *
- * Footnotes
- * 1. It may be better to directly call objc_sendMessage or even 
- *    objc_sendMessageSuper, but that would require us to use libffi-style
- *    technology (or rely on platform specific tricks like DllCall uses).
- *    If we'd directly call objc_sendMessageSuper we can use the same function
- *    for normal and 'super-method' calls.
- *
- * FIXME: Alignment is not dealt with.
- */
-PyObject *
-execute_and_pythonify_objc_method (PyObject *aMeth, PyObject* self, PyObject *args)
+* Convert a python value to a basic C unsigned integer value.
+*/
+static int
+depythonify_unsigned_int_value(
+		PyObject* argument, char* descr,
+		unsigned long long* out, unsigned long long max)
 {
-	size_t            argbuf_len = 0;
-	size_t            argbuf_cur = 0;
-	unsigned char*    argbuf = NULL;	/* by-reference arguments */
-	size_t            byref_in_count = 0;
-	size_t            byref_out_count = 0;
-	size_t            plain_count = 0;
-	size_t            objc_argcount;
-	size_t            py_arg;
-	int               i;
-	int*		  byref = NULL; /* offset for arguments in argbuf */
-	NSInvocation*     inv = nil;
-	const char* 	  rettype;
-	NSMethodSignature*  methinfo;
-	ObjCNativeSelector* meth = (ObjCNativeSelector*)aMeth;
-	PyObject*	  objc_result = NULL;
-	PyObject*	  result = NULL;
-	id		  self_obj = nil;
-	id                nil_obj = nil;
+	if (PyInt_Check (argument)) {
+		long temp = PyInt_AsLong(argument);
+		if (temp < 0) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got negative '%s'",
+					descr,
+					argument->ob_type->tp_name);
+			return -1;
 
-	methinfo = [NSMethodSignature signatureWithObjCTypes:meth->sel_signature];
-	objc_argcount = [methinfo numberOfArguments];
-
-	/* First count the number of by reference parameters, and the number
-	 * of bytes of storage needed for them. Note that arguments 0 and 1
-	 * are self and the selector, no need to count counted or checked those.
-	 */
-	for (i = 2; i < objc_argcount; i++) {
-		const char *argtype = [methinfo getArgumentTypeAtIndex:i];
-
-		switch (*argtype) {
-		case _C_PTR: 
-			byref_in_count ++;
-			byref_out_count ++;
-			argbuf_len += objc_sizeof_type(argtype+1);
-			break;
-
-		case _C_INOUT:
-			if (argtype[1] == _C_PTR) {
-				byref_out_count ++;
-				byref_in_count ++;
-				argbuf_len += objc_sizeof_type(argtype+2);
-			}
-			break;
-
-		case _C_IN: case _C_CONST:
-			if (argtype[1] == _C_PTR) {
-				byref_in_count ++;
-				argbuf_len += objc_sizeof_type(argtype+2);
-			}
-			break;
-
-		case _C_OUT:
-			if (argtype[1] == _C_PTR) {
-				byref_out_count ++;
-				argbuf_len += objc_sizeof_type(argtype+2);
-			}
-			break;
-
-		case _C_STRUCT_B: case _C_UNION_B: case _C_ARY_B:
-			plain_count++;
-			argbuf_len += objc_sizeof_type(argtype);
-			break;
-
-		default:
-			plain_count++;
-			break;
+		} else if ((unsigned long long)temp > max) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s' of "
+				"wrong magnitude", descr,
+					argument->ob_type->tp_name);
+			return -1;
 		}
-	}
+		*out = temp;
+		return 0;
 
-	/* 
-	 * We need input arguments for every normal argument and for every
-	 * input argument that is passed by reference.
-	 */
-	if (PyTuple_Size(args) != (plain_count + byref_in_count)) {
-		ObjCErr_Set(PyExc_TypeError, "Need %d arguments, got %d",
-			plain_count + byref_in_count, PyTuple_Size(args));
-		goto error_cleanup;
-	}
+	} else if (PyLong_Check(argument)) {
+		*out = PyLong_AsUnsignedLongLong(argument);
+		if (PyErr_Occurred()) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s' of "
+				"wrong magnitude", descr,
+					argument->ob_type->tp_name);
+			return -1;
+		}
 
-	if (argbuf_len) {
-		argbuf = PyMem_Malloc(argbuf_len);
-		if (argbuf == 0) {
-			PyErr_NoMemory();
-			goto error_cleanup;
+		if (*out > max) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s' of "
+				"wrong magnitude", descr,
+					argument->ob_type->tp_name);
+			return -1;
 		}
-		byref = PyMem_Malloc(sizeof(int) * objc_argcount);
-		if (byref == NULL) {
-			PyErr_NoMemory();
-			goto error_cleanup;
-		}
-		memset(byref, 0, sizeof(int) * objc_argcount);
+		return 0;
+
 	} else {
-		argbuf = NULL;
-		byref = NULL;
-	}
+		PyObject* tmp;
 
-	/* Allocate the invocation. We 'retain' the invocation to avoid 
-	 * loosing it prematurely when this happens to be a call to the 
-	 * dealloc function of an NSAutoreleasePool
-	 */
-	inv = [NSInvocation invocationWithMethodSignature:methinfo];
-	[inv retain]; 
-
-
-	/* Set 'self' argument, for class methods we use the class */ 
-	if (meth->sel_flags & ObjCSelector_kCLASS_METHOD) {
-		if (ObjCObject_Check(self)) {
-			self_obj = ObjCObject_GetObject(self)->isa;
-		} else if (ObjCClass_Check(self)) {
-			self_obj = ObjCClass_GetClass(self);
-		} else {
-			PyErr_SetString(PyExc_TypeError, 
-				"Need objective-C object or class as self");
-			goto error_cleanup;
+		if (PyString_Check(argument) || PyUnicode_Check(argument)) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s'",
+					descr,
+					argument->ob_type->tp_name);
+			return -1;
 		}
+
+		tmp = PyNumber_Long(argument);
+		if (tmp != NULL) {
+			*out = PyLong_AsUnsignedLongLong(tmp);
+			Py_DECREF(tmp);
+
+			if (*out <= max) {
+				return 0;
+			}
+		}
+
+		PyErr_Format(PyExc_ValueError,
+			"depythonifying '%s', got '%s'",
+				descr,
+				argument->ob_type->tp_name);
+		return -1;
+	}
+}
+
+/*
+* Convert a python value to a basic C signed integer value.
+*/
+static int
+depythonify_signed_int_value(
+		PyObject* argument, char* descr,
+		long long* out, long long min, long long max)
+{
+	if (PyInt_Check (argument)) {
+		*out = (long long)PyInt_AsLong(argument);
+		if (*out < min || *out > max) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s' of "
+				"wrong magnitude", descr,
+					argument->ob_type->tp_name);
+			return -1;
+		}
+		return 0;
+
+	} else if (PyLong_Check(argument)) {
+		*out = PyLong_AsLongLong(argument);
+		if (PyErr_Occurred()) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s' of "
+				"wrong magnitude", descr,
+					argument->ob_type->tp_name);
+			return -1;
+		}
+
+		if (*out < min || *out > max) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s' of "
+				"wrong magnitude", descr,
+					argument->ob_type->tp_name);
+			return -1;
+		}
+		return 0;
+
 	} else {
-		if (ObjCObject_Check(self)) {
-			self_obj = ObjCObject_GetObject(self);
-		} else {
-			PyErr_SetString(PyExc_TypeError, 
-				"Need objective-C object as self");
-			goto error_cleanup;
+		PyObject* tmp;
+
+		if (PyString_Check(argument) || PyUnicode_Check(argument)) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying '%s', got '%s' of %d",
+					descr,
+					argument->ob_type->tp_name,
+					PyString_Size(argument));
+			return -1;
 		}
+
+		
+		tmp = PyNumber_Long(argument);
+		if (tmp != NULL) {
+			*out = PyLong_AsLongLong(tmp);
+			Py_DECREF(tmp);
+
+			if (*out >= min && *out <= max) {
+				return 0;
+			}
+		}
+
+		PyErr_Format(PyExc_ValueError,
+			"depythonifying '%s', got '%s'",
+				descr,
+				argument->ob_type->tp_name);
+		return -1;
 	}
+}
 
-	[inv setTarget:self_obj];
-	[inv setSelector:meth->sel_selector];
+int depythonify_c_return_value(
+const char* type, PyObject* argument, void* datum)
+{
+	long long temp;
+	unsigned long long utemp;
+	int       r;
 
-	py_arg = 0;
-	for (i = 2; i < objc_argcount; i++) {
-		const char* error;
-		PyObject *argument;
-		const char *argtype = [methinfo getArgumentTypeAtIndex:i];
+	switch (*type) {
+	case _C_CHR: 
+		if (PyString_Check(argument) && PyString_Size(argument) == 1) {
+			*(int*) datum = PyString_AsString (argument)[0];
+			return 0;
+		}
 
-		if (argtype[0] == _C_OUT && argtype[1] == _C_PTR) {
-			/* Just allocate room in argbuf and set that*/
-			void* arg;
-			byref[i] = argbuf_cur;
-			arg = argbuf + argbuf_cur;
-	  		[inv setArgument:&arg atIndex:i];
+		r = depythonify_signed_int_value(argument, "char",
+			&temp, CHAR_MIN, CHAR_MAX);
+		if (r == 0) {
+			*(int*)datum = temp;
+		}
+		return r;
 
-			argbuf_cur += objc_sizeof_type(argtype+2);
+	case _C_UCHR:
+		if (PyString_Check(argument) && PyString_Size(argument) == 1) {
+			*(unsigned int*) datum = 
+				PyString_AsString (argument)[0];
+			return 0;
+		}
+		r = depythonify_unsigned_int_value(argument, "unsigned short",
+			&utemp, UCHAR_MAX);
+		if (r == 0) {
+			*(unsigned int*)datum = utemp;
+		}
+		return r;
+
+	case _C_SHT:
+		r = depythonify_signed_int_value(argument, "short",
+			&temp, SHRT_MIN, SHRT_MAX);
+		if (r == 0) {
+			*(int*)datum = temp;
+		}
+		return r;
+
+	case _C_USHT:
+		r = depythonify_unsigned_int_value(argument, "unsigned short",
+			&utemp, USHRT_MAX);
+		if (r == 0) {
+			*(unsigned int*)datum = utemp;
+		}
+		return r;
+
+	default:
+		return depythonify_c_value(type, argument, datum);
+	}
+}
+
+PyObject *
+pythonify_c_return_value (const char *type, void *datum)
+{
+	static  const char intType[] = { _C_INT, 0 };
+	static  const char uintType[] = { _C_UINT, 0 };
+
+	switch(*type) {
+	case _C_CHR: 
+	case _C_SHT:
+		return pythonify_c_value(intType, datum);
+	case _C_UCHR: case _C_USHT:
+		return pythonify_c_value(uintType, datum);
+
+	default:
+		return pythonify_c_value(type, datum);
+	}
+}
+
+
+int
+depythonify_c_value (const char *type, PyObject *argument, void *datum)
+{
+	/* Pass by reference output arguments are sometimes passed a NULL 
+	 * pointer, this surpresses a core dump.
+	 */
+	long long temp;
+	unsigned long long utemp;
+	int       r;
+
+	if (!datum) return 0;
+
+	type = PyObjCRT_SkipTypeQualifiers (type);
+
+	switch (*type) {
+#ifdef _C_ATOM
+	case _C_ATOM:
+#endif
+	case _C_CHARPTR:
+		if (!PyString_Check (argument) && argument != Py_None) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'charptr', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
+		} else if (argument == Py_None) {
+			*(char **) datum = NULL;
 		} else {
-			/* Encode argument, maybe after allocating space */
-			char argbuffer[objc_sizeof_type (argtype)];
+			*(char **) datum = PyString_AS_STRING(
+				(PyStringObject*)argument);
+		}
+		break;
 
-			if (argtype[0] == _C_OUT) argtype ++;
+	case _C_CHR:
+		if (PyString_Check(argument) && PyString_Size(argument) == 1) {
+			*(char*) datum = PyString_AsString (argument)[0];
+			return 0;
+		}
 
-			argument = PyTuple_GET_ITEM (args, py_arg);
-			switch (*argtype) {
-			case _C_STRUCT_B: case _C_ARY_B: case _C_UNION_B:
-				/* Allocate space and encode */
-				{
-					void* arg = argbuf + argbuf_cur;
-					argbuf_cur += objc_sizeof_type(argtype);
-					byref[i] = argbuf_cur;
-	  				error = depythonify_c_value (
-						argtype, 
-						argument, 
-						arg);
+		r = depythonify_signed_int_value(argument, "char",
+			&temp, CHAR_MIN, CHAR_MAX);
+		if (r == 0) {
+			*(char*)datum = temp;
+		}
+		return r;
 
-					if (!error) {
-						[inv setArgument:arg atIndex:i];
-					}
-				} 
-				break;
+	case _C_UCHR:
+		if (PyString_Check(argument) && PyString_Size(argument) == 1) {
+			*(unsigned char*) datum = 
+				PyString_AsString (argument)[0];
+			return 0;
+		}
+		r = depythonify_unsigned_int_value(argument, "unsigned short",
+			&utemp, UCHAR_MAX);
+		if (r == 0) {
+			*(unsigned char*)datum = utemp;
+		}
+		return r;
 
-			case _C_PTR:
-				/* Allocate space and encode */
-				{
-					void* arg = argbuf + argbuf_cur;
-					argbuf_cur += objc_sizeof_type(argtype+2);
-					byref[i] = argbuf_cur;
-	  				error = depythonify_c_value (
-						argtype+2, 
-						argument, 
-						arg);
+	case _C_SHT:
+		r = depythonify_signed_int_value(argument, "short",
+			&temp, SHRT_MIN, SHRT_MAX);
+		if (r == 0) {
+			*(short*)datum = temp;
+		}
+		return r;
 
-					if (!error) {
-						[inv setArgument:&arg atIndex:i];
-					}
-				} 
-				break;
+	case _C_USHT:
+		r = depythonify_unsigned_int_value(argument, "unsigned short",
+			&utemp, USHRT_MAX);
+		if (r == 0) {
+			*(unsigned short*)datum = utemp;
+		}
+		return r;
 
-			case _C_INOUT:
-			case _C_IN:
-			case _C_CONST:
-				if (argbuf[1] == _C_PTR) {
-					/* Allocate space and encode */
-					void* arg = argbuf + argbuf_cur;
-					argbuf_cur += objc_sizeof_type(argtype+2);
-					byref[i] = argbuf_cur;
-	  				error = depythonify_c_value (
-						argtype+2, 
-						argument, 
-						arg);
+#ifdef _C_BOOL
+	case _C_BOOL:
+		*(bool*)datum = PyObject_IsTrue(argument);
+		return 0;
+#endif
 
-					if (!error) {
-						[inv setArgument:&arg atIndex:i];
-					}
+	case _C_INT:
+		r = depythonify_signed_int_value(argument, "int",
+			&temp, INT_MIN, INT_MAX);
+		if (r == 0) {
+			*(int*)datum = temp;
+		}
+		return r;
+
+	case _C_UINT:
+		r = depythonify_unsigned_int_value(argument, "unsigned int",
+			&utemp, UINT_MAX);
+		if (r == 0) {
+			*(unsigned int*)datum = utemp;
+		}
+		return r;
+
+	case _C_LNG:
+		r = depythonify_signed_int_value(argument, "long",
+			&temp, LONG_MIN, LONG_MAX);
+		if (r == 0) {
+			*(long*)datum = temp;
+		}
+		return r;
+
+	case _C_ULNG:
+		r = depythonify_unsigned_int_value(argument, "unsigned long",
+			&utemp, ULONG_MAX);
+		if (r == 0) {
+			*(unsigned long*)datum = utemp;
+		}
+		return r;
+
+	case _C_LNGLNG:
+		r = depythonify_signed_int_value(argument, "long long",
+			&temp, LLONG_MIN, LLONG_MAX);
+		if (r == 0) {
+			*(long long*)datum = temp;
+		}
+		return r;
+
+	case _C_ULNGLNG:
+		r = depythonify_unsigned_int_value(argument, 
+			"unsigned long long", &utemp, ULLONG_MAX);
+		if (r == 0) {
+			*(unsigned long long*)datum = utemp;
+		}
+		return r;
+
+	case _C_ID:
+		/*
+			XXX
+			
+			This should, for values other than Py_None, always return the same id
+			for the same PyObject for as long as that id lives.  I think that the
+			implementation of this should be moved to OC_PythonObject,
+			which would itself have a map of PyObject->id.  The dealloc
+			of each of these custom objects should notify OC_PythonObject
+			to remove map entry.  We need to significantly change how immutable types
+			are bridged, and create OC_PythonString, OC_PythonBool, etc. which are 
+			subclasses of what they should be from the the Objective C side.
+
+			If we don't do this, we break binary plist serialization, and likely
+			other things, which assume that foo[bar] is foo[bar] for the duration of
+			the serialization process.  I would imagine that other things also
+			assume this kind of invariant, so we should do it here rather than in every
+			container object.
+		*/
+				
+
+		return [OC_PythonObject wrapPyObject:argument toId:(id *)datum];
+
+	case _C_CLASS:
+		if (PyObjCClass_Check(argument))  {
+			*(Class*) datum = PyObjCClass_GetClass(argument);
+		} else if (argument == Py_None) {
+			*(Class*) datum = nil;
+		} else {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'Class', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
+		}
+		break;
+
+	case _C_SEL:
+		if (argument == Py_None) {
+			*(SEL*)datum = NULL;
+		} else if (PyObjCSelector_Check (argument)) {
+			*(SEL *) datum = PyObjCSelector_GetSelector(argument); 
+		} else if (PyString_Check(argument)) {
+			char *selname = PyString_AsString (argument);
+			SEL sel;
+
+			if (*selname == '\0') {
+				*(SEL*)datum = NULL;
+			} else {
+				sel = PyObjCRT_SELUID (selname);
+
+				if (sel)  {
+					*(SEL*) datum = sel;
 				} else {
-					/* just encode */
-	  				error = depythonify_c_value (
-						argtype+2, 
-						argument, 
-						argbuffer);
-					if (!error) {
-						[inv setArgument:argbuffer atIndex:i];
-					}
-				}
-				break;
-			default:
-	  			error = depythonify_c_value (
-					argtype, 
-					argument, 
-					argbuffer);
-				if (!error) {
-					[inv setArgument:argbuffer atIndex:i];
+					PyErr_Format(PyExc_ValueError,
+						"depythonifying 'SEL', cannot "
+						"register string with runtime");
+					return -1;
 				}
 			}
-
-			if (error) {
-				const char* typeend = objc_skip_typespec(argtype);
-				ObjCErr_Set(PyExc_TypeError,
-					"expected %s for argument %d: its "
-					"typespec is '%.*s'",
-					error, py_arg+1, typeend-argtype, argtype);
-				goto error_cleanup;
-			}
-			py_arg++;
+		} else {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'SEL', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
 		}
-	}
-
-	PyErr_Clear();
-	NS_DURING
-		[inv invoke];
-	NS_HANDLER
-		ObjCErr_FromObjC(localException);
-	NS_ENDHANDLER
-	if (PyErr_Occurred()) goto error_cleanup;
-
-	rettype = [methinfo methodReturnType];
-	if ( (*rettype != _C_VOID) && ([methinfo isOneway] == NO) )
-	{
-		char *retbuffer = alloca ([methinfo methodReturnLength]);
-
-		[inv getReturnValue:retbuffer];
-
-		objc_result = pythonify_c_value ([methinfo methodReturnType],
-					retbuffer);
-	} else {
-		Py_INCREF(Py_None);
-		objc_result =  Py_None;
-	}
+		break;
 
 
-	if (byref_out_count == 0) {
-		result = objc_result;
-	} else {
-		result = PyTuple_New(byref_out_count+1);
-		if (result == 0) goto error_cleanup;
-
-		if (PyTuple_SetItem(result, 0, objc_result) < 0) {
-			goto error_cleanup;
-		}
-		objc_result = NULL;
-
-		py_arg = 1;
-		for (i = 2; i < objc_argcount; i++) {
-			const char *argtype = [methinfo 
-						getArgumentTypeAtIndex:i];
-			void*       arg;
-			PyObject*   v;
-
-			switch (*argtype) {
-			case _C_PTR: 
-				arg = argbuf + byref[i];
-				v = pythonify_c_value(argtype+1, arg);
-				if (!v) goto error_cleanup;
-				if (PyTuple_SetItem(result, py_arg++, v) < 0) {
-					Py_DECREF(v);
-					goto error_cleanup;
-				}
-				break;
-
-			case _C_INOUT:
-			case _C_OUT:
-				if (argtype[1] == _C_PTR) {
-					arg = argbuf + byref[i];
-					v = pythonify_c_value(argtype+2, arg);
-					if (!v) goto error_cleanup;
-					if (PyTuple_SetItem(result, 
-							py_arg++, v) < 0) {
-						Py_DECREF(v);
-						goto error_cleanup;
-					}
-				}
-				break;
+	case _C_PTR:
+		if (argument == Py_None) {
+			*(void**)datum = NULL;
+			return 0;
+		} 
+		r = PyObjCPointerWrapper_FromPython(type, argument, datum);
+		if (r == -1) {
+			if (PyErr_Occurred()) {
+				return -1;
+			} else if (PyObjCPointer_Check (argument)) {
+				*(void **) datum = PyObjCPointer_Ptr(argument);
+			} else {
+				PyErr_Format(PyExc_ValueError,
+					"depythonifying 'pointer', got '%s'",
+						argument->ob_type->tp_name);
+				return -1;
 			}
 		}
-	}
+		break;
 
-#if 1
-	self_obj = nil;
-	if (*[methinfo methodReturnType] == _C_ID) {
-		[inv setReturnValue:&nil_obj];
-	}
-	[inv setTarget:nil];
-#endif
-	[inv release];
-	inv = nil;
+	case _C_FLT:
+		if (PyFloat_Check (argument)) {
+			*(float *) datum = (float)PyFloat_AsDouble (argument);
+		} else if (PyInt_Check (argument)) {
+			*(float *) datum = (float) PyInt_AsLong (argument);
+		} else if (PyString_Check(argument) || PyUnicode_Check(argument)) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'float', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
+		} else {
+			PyObject* tmp = PyNumber_Float(argument);
+			if (tmp != NULL) {
+				double dblval = PyFloat_AsDouble(tmp);
+				Py_DECREF(tmp);
+				*(float*) datum = dblval;
+				return 0;
+			}
 
-	PyMem_Free(argbuf);
-	argbuf = NULL;
-	PyMem_Free(byref);
-	byref = NULL;
-	[methinfo release];
-	methinfo = nil;
-	
-	return result;
-
-error_cleanup:
-
-	if (inv) {
-		self_obj = nil;
-#if 1
-		if (*[methinfo methodReturnType] == _C_ID) {
-			[inv setReturnValue:&self_obj];
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'float', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
 		}
-#endif
-		[inv setTarget:nil];
-		[inv release];
-		inv = nil;
+		break;
+
+	case _C_DBL:
+		if (PyFloat_Check (argument)) {
+			*(double *) datum = PyFloat_AsDouble (argument);
+		} else if (PyInt_Check (argument)) {
+			*(double *) datum = (double) PyInt_AsLong (argument);
+		} else if (PyString_Check(argument) || PyUnicode_Check(argument)) {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'float', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
+		} else {
+			PyObject* tmp = PyNumber_Float(argument);
+			if (tmp != NULL) {
+				double dblval = PyFloat_AsDouble(tmp);
+				Py_DECREF(tmp);
+				*(double*) datum = dblval;
+				return 0;
+			}
+
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'double', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
+		}
+		break;
+
+	case _C_UNION_B:
+		if (PyString_Check (argument)) {
+			int expected_size = PyObjCRT_SizeOfType (type);
+
+			if (expected_size == -1) {
+				PyErr_Format(PyExc_ValueError,
+					"depythonifying 'union' of "
+					"unknown size");
+				return -1;
+			} else if (expected_size != PyString_Size (argument)) {
+				PyErr_Format(PyExc_ValueError,
+					"depythonifying 'union' of size %d, "
+					"got string of %d",
+						   expected_size, 
+						   PyString_Size (argument));
+				return -1;
+			} else {
+				memcpy ((void *) datum, 
+					PyString_AS_STRING (argument), 
+				expected_size);
+			}
+		} else {
+			PyErr_Format(PyExc_ValueError,
+				"depythonifying 'union', got '%s'",
+					argument->ob_type->tp_name);
+			return -1;
+		}
+		break;
+
+	case _C_STRUCT_B:
+		return depythonify_c_struct (type, argument, datum);
+
+	case _C_ARY_B:
+		return depythonify_c_array (type, argument, datum);
+
+	default:
+		PyErr_Format(PyExc_ValueError,
+			"depythonifying unknown typespec %#x", *type);
+		return -1;
 	}
-	if (objc_result) {
-		Py_DECREF(objc_result);
-		objc_result = NULL;
-	}
-	if (result) {
-		Py_DECREF(result);
-		result = NULL;
-	}
-	if (argbuf) {
-		PyMem_Free(argbuf);
-		argbuf = NULL;
-	}
-	if (byref) {
-		PyMem_Free(byref);
-		byref = NULL;
-	}
-	if (methinfo) {
-		[methinfo release];
-		methinfo = nil;
-	}
-	return NULL;
+	return 0;
 }

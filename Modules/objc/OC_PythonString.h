@@ -1,44 +1,69 @@
-/* Copyright (c) 1996,97 by Lele Gaifax.  All Rights Reserved
- *
- * This software may be used and distributed freely for any purpose
- * provided that this notice is included unchanged on any and all
- * copies. The author does not warrant or guarantee this software in
- * any way.
- *
- * This file is part of the PyObjC package.
- *
- * RCSfile: OC_PythonString.h,v
- * Revision: 1.8
- * Date: 1998/01/04 17:59:21
- *
- * Created Thu Sep  5 19:46:45 1996.
+/*!
+ * @header OC_PythonString.h
+ * @abstract Objective-C proxy class for Python str
+ * @discussion
+ *     This file defines the class that is used to represent Python str
+ *     in Objective-C.
  */
 
-#ifndef _OC_PythonString_H
-#define _OC_PythonString_H
+#include "pyobjc.h"
 
-#include "OC_PythonObject.h"
-
-/*#C This class wraps a PyString object, making it easier to handle this
-  kind of objects from Objective-C.  */
-@interface OC_PythonString : OC_PythonObject
+/*!
+ * @class       OC_PythonString
+ * @abstract    Objective-C proxy class for Python str
+ * @discussion  Instances of this class are used as proxies for Python 
+ *              str when these are passed to Objective-C code.
+ */
+@interface OC_PythonString : NSString
 {
+	PyObject* value;
+	id realObject;
 }
 
-/*#M Returns a new autoreleased PyString object with @var{str} of
-  length @var{size} as contents. */
-+ (id <PythonObject>) fromString:(char *) str andSize:(int) size;
+/*!
+ * @method newWithPythonObject:
+ * @abstract Create a new OC_PythonString for a specific Python str
+ * @param value A python str
+ * @result Returns an autoreleased instance representing value
+ *
+ * Caller must own the GIL.
+ */
++ newWithPythonObject:(PyObject*)value;
 
-//#M Returns a new autoreleased PyString object with @var{str} as contents.
-+ (id <PythonObject>) fromString:(char *) str;
+/*!
+ * @method initWithPythonObject:
+ * @abstract Initialise a OC_PythonString for a specific Python str
+ * @param value A python str
+ * @result Returns self
+ *
+ * Caller must own the GIL.
+ */
+- initWithPythonObject:(PyObject*)value;
 
-//#M Returns the size of the string.
-- (int) size;
+/*!
+ * @method dealloc
+ * @abstract Deallocate the object
+ */
+-(void)dealloc;
 
-//#M Returns the ``C'' equivalent.
-- (char *) asString;
+/*!
+ * @abstract Access the wrapped Python str
+ * @result Returns a new reference to the wrapped Python str.
+ */
+-(PyObject*)__pyobjc_PythonObject__;
 
-@end /* OC_PythonString class interface */
+/*!
+ * @abstract Access the NSString* representing the str
+ * @result Returns a backing NSString* object
+ */
+-(id)__realObject__;
 
+/*
+ * Primitive NSString methods
+ *
+ */
+-(unsigned)length;
+-(unichar)characterAtIndex:(unsigned)index;
+-(void)getCharacters:(unichar *)buffer range:(NSRange)aRange;
 
-#endif /* _OC_PythonString_H */
+@end

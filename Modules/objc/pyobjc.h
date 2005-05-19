@@ -1,16 +1,69 @@
-#ifndef META_H
-#define META_H
+#ifndef PyObjC_H
+#define PyObjC_H
 
-#include "objc_util.h"
+/*
+ * Central include file for PyObjC. 
+ */
+
+#define OBJC_VERSION "1.3.6"
+
+// Loading in AppKit on Mac OS X 10.3 results in
+// a bit less than 1500 classes.
+#define PYOBJC_EXPECTED_CLASS_COUNT 2048
 
 #include <Python.h>
+#include "structmember.h"
+#include "pyobjc-compat.h"
+
+
+#ifdef GNU_RUNTIME
+//#include <objc/runtime.h>
+#include <objc/objc.h>
+#else
 #include <objc/objc-runtime.h>
+#include <objc/objc.h>
+#endif
+
+// how do we make this dependent on sizeof(unichar)??
+#if Py_UNICODE_SIZE == 2
+#define PyObjC_UNICODE_FAST_PATH
+#endif
+
+#include "proxy-registry.h"
+#include "objc_support.h"
+#include "pointer-support.h"
 #include "OC_PythonObject.h"
 #include "OC_PythonArray.h"
+#include "OC_PythonData.h"
 #include "OC_PythonDictionary.h"
+#include "OC_PythonUnicode.h"
+#include "OC_PythonString.h"
+#include "method-signature.h"
+#include "objc_util.h"
+#include "objc-class.h"
+#include "objc-object.h"
+#include "selector.h"
+#include "libffi_support.h"
 #include "super-call.h"
+#include "instance-var.h"
+#include "class-builder.h" 
+#include "ObjCPointer.h"
+#include "informal-protocol.h"
+#include "formal-protocol.h"
+#include "alloc_hack.h"
+#include "unicode-object.h"
+#include "class-descriptor.h"
+#include "class-list.h"
+#include "struct-wrapper.h"
+#include "method-imp.h"
+#include "bundle-variables.h"
+#include "function.h"
 
-#define OBJC_VERSION "0.7.1"
+
+/*
+ * XXX: All definitions below here should be moved to different/new 
+ * headers
+ */
 
 #ifdef MACOSX
 
@@ -23,141 +76,49 @@
  */
 @interface NSMethodSignature (WarningKiller)
 	+signatureWithObjCTypes:(const char*)types;
-	@end
+@end /* interface NSMethodSignature */
+
 #endif
 
-
-extern PyTypeObject ObjCClass_Type;
-#define ObjCClass_Check(obj) PyObject_TypeCheck(obj, &ObjCClass_Type)
-
-
-typedef struct {
-	PyObject_HEAD
-	PyObject* weak_refs;
-	id        objc_object;
-	int 	  is_paired;
-} ObjCObject;
-
-extern PyTypeObject ObjCObject_Type;
-#define ObjCObject_Check(obj) PyObject_TypeCheck(obj, &ObjCObject_Type)
-
-PyObject* ObjCClass_New(Class objc_class);
-Class     ObjCClass_GetClass(PyObject* object);
-PyObject* ObjCClass_FindSelector(PyObject* cls, SEL selector);
-void 	  ObjCClass_MaybeRescan(PyObject* class);
-int 	  ObjCClass_IsSubClass(Class child, Class parent);
-int 	  ObjC_RegisterClassProxy(Class cls, PyObject* classProxy);
-void ObjCClass_CheckMethodList(PyObject* cls);
+extern int PyObjC_VerboseLevel;
+extern int PyObjC_StrBridgeEnabled;
+extern PyObject *PyObjCStrBridgeWarning;
+extern PyObject *PyObjC_NSNumberWrapper;
 
 
-
-
-PyObject* ObjCObject_New(id objc_object);
-PyObject* ObjCObject_FindSelector(PyObject* cls, SEL selector);
-id 	  ObjCObject_GetObject(PyObject* object);
-#define   ObjCObject_GetObject(object) (((ObjCObject*)(object))->objc_object)
-
-
-/* in class-descriptor.m */
-PyObject* objcclass_descr_get(PyObject* obj, void* closure);
-extern char objcclass_descr_doc[];
-
-#define OBJCCLASS_SLOT \
-	{ 						\
-	"__objc_class__",		/* name */	\
-	objcclass_descr_get,		/* get */	\
-	0,				/* set */	\
-	objcclass_descr_doc,		/* doc */	\
-	0,				/* closure */	\
-	}
-
-
-/* in selector.m */
-/* We have a small class-tree for selector/objective-C methods: A base type
- * and two subtypes (one for methods implemented in python and one for methods
- * implemented in Objective-C)
- */
-
-extern PyObject* allocator_dict;
-
-#define ObjCSelector_kCLASS_METHOD    0x1
-#define ObjCSelector_kDONATE_REF      0x2
-#define ObjCSelector_kREQUIRED        0x4
-
-#define ObjCSelector_HEAD \
-	PyObject_HEAD 			\
-	char*		sel_signature;  \
-	SEL		sel_selector;	\
-	PyObject*	sel_self;	\
-	Class		sel_class;	\
-	int		sel_flags;
-
-
-typedef struct {
-	ObjCSelector_HEAD
-} ObjCSelector;
-
-typedef struct {
-	ObjCSelector_HEAD
-	ObjC_CallFunc_t sel_call_self; 
-	ObjC_CallFunc_t sel_call_super;
-} ObjCNativeSelector;
-
-typedef struct {
-	ObjCSelector_HEAD
-	PyObject*	callable;
-} ObjCPythonSelector;
-
-extern PyTypeObject ObjCSelector_Type;
-extern PyTypeObject ObjCNativeSelector_Type;
-extern PyTypeObject ObjCPythonSelector_Type;
-#define ObjCSelector_Check(obj) PyObject_TypeCheck(obj, &ObjCSelector_Type)
-#define ObjCNativeSelector_Check(obj) PyObject_TypeCheck(obj, &ObjCNativeSelector_Type)
-#define ObjCPythonSelector_Check(obj) PyObject_TypeCheck(obj, &ObjCPythonSelector_Type)
-
-char* ObjCSelector_Signature(PyObject* obj);
-SEL   ObjCSelector_Selector(PyObject* obj);
-int   ObjCSelector_Required(PyObject* obj);
-int ObjC_SignatureForSelector(char* class_name, SEL selector, char* signature);
-
-PyObject* ObjCSelect_NewFromPython(char* selector, char* signature, PyObject* callable);
-PyObject* ObjCSelect_NewWithSelector(Class objc_class, SEL selector);
-
-PyObject*
-ObjCSelector_NewNative(Class class, SEL selector, char* signature, int class_method) ;
-PyObject* ObjCSelector_FindNative(PyObject* self, char* name);
-PyObject*
-ObjCSelector_New(PyObject* callable, SEL selector, char* signature, int class_method) ;
-SEL ObjCSelector_DefaultSelector(char* methname);
-
-
-
-/* From 'instance-var.m' */
-#include "instance-var.h"
-
-/* From class-builder.m */
-#include "class-builder.h" 
-
-/* From ObjCPointer.m */
-#include "ObjCPointer.h"
-
-/* From 'class-list.m' */
-PyObject* ObjC_GetClassList(void);
-
-
-int ObjC_register_methods(void);
-
-int ObjCAPI_Register(PyObject* module_dict);
+int PyObjCAPI_Register(PyObject* module);
 #define PYOBJC_BUILD
 #include "pyobjc-api.h"
 
+extern PyObject* PyObjCMethodAccessor_New(PyObject* base, int class_method);
 
-extern PyTypeObject ObjCInformalProtocol_Type;
-#define ObjCInformalProtocol_Check(obj) PyObject_TypeCheck(obj, &ObjCInformalProtocol_Type)
-
-int     ObjCIPVerify(PyObject* obj, PyObject* cls);
-PyObject* ObjCIPFindInfo(PyObject* obj, SEL selector);
-
+/* Needed by method-accessor, name will be changed soon */
+extern PyTypeObject PyObjCMethodAccessor_Type;
+char* PyObjC_SELToPythonName(SEL, char*, size_t);
 
 
-#endif /* META_H */
+#ifdef MACOSX
+
+/* toll-free-bridging.m */
+id PyObjC_CFTypeToID(PyObject* argument);
+PyObject* PyObjC_IDToCFType(id argument);
+
+/* opaque-pointer.m */
+PyObject* PyObjCCreateOpaquePointerType(const char* name, 
+		const char* typestr, const char* docstr);
+
+/* objc-NULL.m */
+extern PyObject* PyObjC_NULL;
+extern PyObject* PyObjCInitNULL(void);
+
+#endif
+
+#define PyObjCErr_InternalError() \
+	PyErr_Format(PyObjCExc_InternalError, \
+	   "PyObjC: internal error in %s at %s:%d", \
+	   __FUNCTION__, __FILE__, __LINE__)
+#define PyObjC_Assert(expr, retval) \
+	if (!(expr)) { PyObjCErr_InternalError(); return (retval); }
+
+
+#endif /* PyObjC_H */
