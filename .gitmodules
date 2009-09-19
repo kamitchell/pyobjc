@@ -1,123 +1,123 @@
 [submodule "pyobjc/macholib"]
 	path = pyobjc/macholib
-	url = ../PyObjC/macholib
+	url = ../macholib.git
 [submodule "pyobjc/modulegraph"]
 	path = pyobjc/modulegraph
-	url = ../PyObjC/modulegraph
+	url = ../modulegraph.git
 [submodule "pyobjc/altgraph"]
 	path = pyobjc/altgraph
-	url = ../PyObjC/altgraph
+	url = ../altgraph.git
 [submodule "pyobjc/py2app"]
 	path = pyobjc/py2app
-	url = ../PyObjC/py2app
+	url = ../py2app.git
 [submodule "launch/ez_setup"]
 	path = launch/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "notify/ez_setup"]
 	path = notify/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/PyOpenGL-2.0.2.01/ez_setup"]
 	path = pyobjc/PyOpenGL-2.0.2.01/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc/ez_setup"]
 	path = pyobjc/pyobjc/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-core/ez_setup"]
 	path = pyobjc/pyobjc-core/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-AddressBook/ez_setup"]
 	path = pyobjc/pyobjc-framework-AddressBook/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-AppleScriptKit/ez_setup"]
 	path = pyobjc/pyobjc-framework-AppleScriptKit/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-Automator/ez_setup"]
 	path = pyobjc/pyobjc-framework-Automator/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-CFNetwork/ez_setup"]
 	path = pyobjc/pyobjc-framework-CFNetwork/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-CalendarStore/ez_setup"]
 	path = pyobjc/pyobjc-framework-CalendarStore/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-Cocoa/ez_setup"]
 	path = pyobjc/pyobjc-framework-Cocoa/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-Collaboration/ez_setup"]
 	path = pyobjc/pyobjc-framework-Collaboration/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-CoreData/ez_setup"]
 	path = pyobjc/pyobjc-framework-CoreData/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-CoreText/ez_setup"]
 	path = pyobjc/pyobjc-framework-CoreText/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-DictionaryServices/ez_setup"]
 	path = pyobjc/pyobjc-framework-DictionaryServices/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-ExceptionHandling/ez_setup"]
 	path = pyobjc/pyobjc-framework-ExceptionHandling/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-FSEvents/ez_setup"]
 	path = pyobjc/pyobjc-framework-FSEvents/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-InputMethodKit/ez_setup"]
 	path = pyobjc/pyobjc-framework-InputMethodKit/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-InstallerPlugins/ez_setup"]
 	path = pyobjc/pyobjc-framework-InstallerPlugins/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-InstantMessage/ez_setup"]
 	path = pyobjc/pyobjc-framework-InstantMessage/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-InterfaceBuilderKit/ez_setup"]
 	path = pyobjc/pyobjc-framework-InterfaceBuilderKit/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-LatentSemanticMapping/ez_setup"]
 	path = pyobjc/pyobjc-framework-LatentSemanticMapping/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-LaunchServices/ez_setup"]
 	path = pyobjc/pyobjc-framework-LaunchServices/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-Message/ez_setup"]
 	path = pyobjc/pyobjc-framework-Message/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-PreferencePanes/ez_setup"]
 	path = pyobjc/pyobjc-framework-PreferencePanes/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-PubSub/ez_setup"]
 	path = pyobjc/pyobjc-framework-PubSub/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-QTKit/ez_setup"]
 	path = pyobjc/pyobjc-framework-QTKit/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-Quartz/ez_setup"]
 	path = pyobjc/pyobjc-framework-Quartz/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-ScreenSaver/ez_setup"]
 	path = pyobjc/pyobjc-framework-ScreenSaver/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-ScriptingBridge/ez_setup"]
 	path = pyobjc/pyobjc-framework-ScriptingBridge/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-SearchKit/ez_setup"]
 	path = pyobjc/pyobjc-framework-SearchKit/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-SyncServices/ez_setup"]
 	path = pyobjc/pyobjc-framework-SyncServices/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-SystemConfiguration/ez_setup"]
 	path = pyobjc/pyobjc-framework-SystemConfiguration/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-WebKit/ez_setup"]
 	path = pyobjc/pyobjc-framework-WebKit/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-framework-XgridFoundation/ez_setup"]
 	path = pyobjc/pyobjc-framework-XgridFoundation/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-metadata/ez_setup"]
 	path = pyobjc/pyobjc-metadata/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
 [submodule "pyobjc/pyobjc-xcode/ez_setup"]
 	path = pyobjc/pyobjc-xcode/ez_setup
-	url = ../PyObjC/ez_setup
+	url = ../ez_setup.git
